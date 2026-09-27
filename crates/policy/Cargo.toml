@@ -1,0 +1,7 @@
+[package]
+name = "policy"
+version.workspace = true
+edition.workspace = true
+
+# ROS2ノードとSP1 guestで共有する方策。std/ROS依存を持たせない
+[dependencies]

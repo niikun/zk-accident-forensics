@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>robot_nodes</name>
+  <version>0.1.0</version>
+  <description>Policy and blackbox nodes for ZK accident forensics</description>
+  <maintainer email="niikun0209@gmail.com">niikun</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclrs</depend>
+  <depend>rosidl_runtime_rs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+
+  <export>
+    <build_type>ament_cargo</build_type>
+  </export>
+</package>
