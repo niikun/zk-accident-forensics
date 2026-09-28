@@ -58,6 +58,31 @@
 問題提起 → 通常走行（A） → 飛び出しで衝突し「不可避」を証明（B） → ログ改ざん・モデルのすり替えを検証が弾く（C、赤×） → 仕組み図 → 応用。
 余力があれば、バグのある旧モデルで衝突し「AI過失」が証明される場面（B'）を入れる。
 
+### 先行研究と新規性（2026-09-27の調査、9/28に記録）
+
+調査はユーザーが外部のAIで実施したもの。**Hello ZK Robotの実在（最終更新2026-02-25）以外は未確認**なので、レポートで引用する前に一次資料を開いて確かめること。
+
+| 系統 | 代表例 | 今回との関係 |
+|---|---|---|
+| 事故調査用のブラックボックス | Winfield & Jirotka「The case for an ethical black box」(2017)、Ethical Black Boxのドラフト標準 [arXiv:2205.06564](https://arxiv.org/abs/2205.06564)、RoboTIPSの模擬事故調査（外骨格 [arXiv:2411.14008](https://arxiv.org/abs/2411.14008)） | 問題設定の出発点。「記録して調査する」は既存。ログを見せられない場合にZKへ、と話をつなぐ |
+| 暗号化＋改ざん検知ログ | [Vouch PAD-069 Confidential, Tamper-Evident Robot Black-Box](https://github.com/vouch-protocol/vouch/blob/main/docs/disclosures/PAD-069-confidential-tamper-evident-robot-blackbox.md)（AES-GCM＋ハッシュチェーン＋署名） | **S1とほぼ同じ**。S1は基盤技術と割り切る |
+| ZKでロボットの安全性を証明 | [Hello ZK Robot](https://github.com/Inversed-Tech/hello-zk-robot)（SP1、非公開の軌跡に対して範囲・禁止区域・速度を検査、`run_hash`で証明を特定の走行に結びつける） | **S1＋S3の原型**。ただし証明するのは「安全制約を満たした」まで |
+| ROS 2＋zkML | [JOLT Atlas zkML Guard](https://github.com/hshadab/robotics)（モデルハッシュ・入力ハッシュ・推論結果・証明を結びつけ、`/cmd_vel`の許可に使う） | **S2に近い**。S2単独を新規性にしない |
+| 秘匿したままの認識・判断の証明 | Hermes Seal [arXiv:2603.26343](https://arxiv.org/abs/2603.26343)（自動運転） | 「企業秘密を守ったまま検証」という動機が同じ |
+| 推論の来歴の証明 | IETF draft-mw-spice-inference-chain | 推論の来歴 → 行動の来歴 → 事故の来歴、と話を広げられる |
+| 事故報告＋ZKP | TAR-PZKP（車両事故報告の伝送、PUF＋ZKP） | 伝送の認証が主で、事故原因の判定はしない |
+
+**新規性として押し出す点**（調査した範囲では一致するものがなかった）
+- 事故区間を公開ルールで機械的に決める
+- 「不可避/AI過失」の判定関数を公開し、guestで計算する（運用者に主張を選ばせない）
+- 実際のROS2ロボットの走行ログと、その方策の実行（ノードとguestでコードを共有）をzkVMで結びつける
+- 呼び方の案: 「秘密を保持した検証可能なロボット事故フォレンジック（Privacy-Preserving Verifiable Robot Accident Forensics）」。
+  流れは Commit → 事故区間の決定 → 方策の再計算 → 原因判定の証明 → 検証
+
+**限界として明記する**: ZKが保証するのは「公開ルールを秘密ログに正しく適用した」ことまで。ルールのパラメータ（最大減速度など）が妥当かどうかと、センサー入力が本物かどうかは保証しない（参考: [ROS 2 Threat Model](https://design.ros2.org/articles/ros2_threat_model.html)）。
+
+**TODO**: 先行研究との差分を1枚の表にして、レポートの工夫点の核にする（W4〜W5）
+
 ## 3. 現在の状態（2026-09-28）
 
 - 初回コミット済み: `crates/policy`（no_std、仮のルールベース`expert()`）と`crates/robot_nodes`（`policy_node`）
@@ -67,7 +92,22 @@
 
 ## 4. 環境の事実（ハマりどころ）
 
-- OS: WSL2（Ubuntu）、ROS 2 **Lyrical**（`/opt/ros/lyrical`）、rustc/cargo 1.97
+### 2台のPCと環境の統一方針（2026-09-28決定、移行中）
+
+- 作業PCは2台。**元のPC**（Ubuntu 26.04、apt版Lyrical、Rust 1.97。HANDOFFを書いた環境）と、
+  **サブPC**（Ubuntu 24.04、ROS未導入、既定のstableは1.96だが1.97のツールチェーンはある。
+  WSLから見えるRAMは**11GB**。SP1の`cargo-prove`は2026-06-25ビルド、ツールチェーンは`succinct`）
+- Lyricalは24.04ではTier3でaptのバイナリがないため、**両PCとも pixi + RoboStack（`https://prefix.dev/robostack-lyrical`）に統一する**
+  - `pixi.toml`/`pixi.lock`をコミットし、もう片方は`pixi install`で同じ環境を作る
+  - robostack-lyricalの`ros2-*`パッケージにも`share/<pkg>/rust`のバインディングが同梱されている（確認済み）。`ros-lyrical-*`は中身が空のエイリアス
+  - apt版Lyricalの`setup.bash`をsourceしない（pixi環境と混ざる）。conda baseの自動有効化にも注意
+  - WSLgでpixi版GazeboのGUIが表示されるかは未確認。駄目ならサブPCにUbuntu 26.04のディストリを追加しaptで入れる
+- Rustの版は`rust-toolchain.toml`で1.97.0に固定する
+- 秘書ノート（`~/company`、`niikun/company`）はgitで同期する。サブPCは7/19で止まっているのでpullが必要
+
+### 元のPCの事実（apt版。pixi移行後は参考）
+
+- OS: WSL2（Ubuntu 26.04）、ROS 2 **Lyrical**（`/opt/ros/lyrical`）、rustc/cargo 1.97
 - マシン: 12コア、RAM 15GB、GPU Quadro T1000
 - **`rclrs`は0.8以上を使う**。0.7はLyrical非対応で、`Unsupported ROS distribution`というコンパイルエラーになる
 - **`ros-env`は0.3**（rclrs 0.8と揃える）。メッセージは`use ros_env::*;`で`sensor_msgs::msg::LaserScan`などが使える
@@ -95,10 +135,28 @@ cargo build && cargo test -p policy
 
 ## 6. 次にやること（W1の残り）
 
-1. ユーザーにros_gzをインストールしてもらう（`! sudo apt install ros-lyrical-ros-gz`）
+0. 環境をpixiに統一する（4章。ユーザーが実施）
+   1. 元のPC: 秘書ノートをpush、`rust-toolchain.toml`を追加
+   2. 元のPC: pixiを導入し`pixi init` → `pixi add ros-lyrical-ros-base` → `pixi run cargo build`、`ros2 topic pub`での疎通をapt版と比較
+   3. `pixi add ros-lyrical-ros-gz`でGazeboのGUI表示を確認し、`pixi.toml`/`pixi.lock`/`.gitignore`（`.pixi/`）をコミット
+   4. サブPC: `git pull` → `pixi install` → 同じ確認
+1. ros_gzを導入する（pixi統一後は上の0-3で入る）
 2. 差動二輪＋LiDARのロボット（TurtleBot3相当、SDFを自作でも可）と障害物のあるワールドを`worlds/`に置く
 3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる
 4. 起動手順をREADMEかスクリプトにまとめる
+
+### サブPCでROSなしでできること（W3の予習）
+
+- **Hello ZK Robotを動かす**（SP1 SDK 6.0.1、guestは80行、hostは121行）。`~/rust/projects/hello-zk-robot`にcloneする（このリポジトリには混ぜない）
+  1. `cd script && RUST_LOG=info cargo run --release -- --execute --run ../examples/sample_run.json`（実行のみ）
+  2. 同じコマンドを`--prove`で実行。RAM 11GBで証明を作れるかを測る（落ちたら`.wslconfig`の`memory=`を上げる）
+  3. 改ざん実験（シナリオCの予行）: 点を1つ禁止区域に動かす → `ok=false`になるか。`run_hash`だけを書き換える → 弾かれるか
+- 読みながら考える問い
+  - privateとpublicの区別はどこで行われているか。今回は何をprivateにするか
+  - `run_hash`は軌跡全体に対するSHA-256 1回。走行中にコミットを少しずつ公開するなら、なぜハッシュチェーンが必要か
+  - 安全チェックに失敗したとき、証明は作られるのか、panicするのか（`ok=false`の証明も必ず出せることが「主張を選ばせない」設計の前提）
+  - `VMAX`などのパラメータは誰がどこで固定しているか（未決事項「不可避のパラメータを公開・固定する場所」のヒント）
+- 結果（サイクル数、証明時間、ピークメモリ）を記録し、事故前後の数十ステップを証明できるか見積もる
 
 ## 7. 設計方針・予定のcrate
 
