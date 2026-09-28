@@ -9,6 +9,7 @@ version = "0.1.0"
 
 [dependencies]
 ros-lyrical-ros-base = ">=0.13.0,<0.14"
+ros-lyrical-ros-gz = ">=3.0.10,<4"
 
 [activation.env]
 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-Wl,-rpath,$CONDA_PREFIX/lib"

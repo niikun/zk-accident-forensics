@@ -103,7 +103,8 @@
   - `pixi.toml`/`pixi.lock`をコミットし、もう片方は`pixi install`で同じ環境を作る
   - robostack-lyricalの`ros2-*`パッケージにも`share/<pkg>/rust`のバインディングが同梱されている（確認済み）。`ros-lyrical-*`は中身が空のエイリアス
   - apt版Lyricalの`setup.bash`をsourceしない（pixi環境と混ざる）。conda baseの自動有効化にも注意
-  - WSLgでpixi版GazeboのGUIが表示されるかは未確認。駄目ならサブPCにUbuntu 26.04のディストリを追加しaptで入れる
+  - ✅ 元のPCでは、pixi版Gazebo（`ros-lyrical-ros-gz` 3.0.10、gz-sim 10 = Jetty）のGUIがWSLgで表示できた（`pixi run gz sim shapes.sdf`、2026-09-29）。
+    サブPCで駄目なら、Ubuntu 26.04のディストリを追加してaptで入れる
 - Rustの版は`rust-toolchain.toml`で1.97.0に固定する
 - **pixiのハマりどころ（元のPCで確認）**
   - チャンネルは`"https://prefix.dev/robostack-lyrical"`とURLで書く。短い名前だと`conda.anaconda.org`を見に行って404になる。順番はrobostackが先、conda-forgeが後（strict priority）
@@ -147,7 +148,7 @@ cargo build && cargo test -p policy
 0. 環境をpixiに統一する（4章。ユーザーが実施）
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
    2. ✅ 元のPC: pixiを導入し`pixi init` → `pixi add ros-lyrical-ros-base` → `pixi run cargo build`、`ros2 topic pub`での疎通をapt版と比較（4章のハマりどころを参照）
-   3. `pixi add ros-lyrical-ros-gz`でGazeboのGUI表示を確認し、`pixi.toml`/`pixi.lock`/`.gitignore`（`.pixi/`）をコミット
+   3. ✅ `pixi add ros-lyrical-ros-gz`でGazeboのGUI表示を確認し（元のPC）、`pixi.toml`/`pixi.lock`/`.gitignore`（`.pixi/`）をコミット
    4. サブPC: `git pull` → `pixi install` → 同じ確認
 1. ros_gzを導入する（pixi統一後は上の0-3で入る）
 2. 差動二輪＋LiDARのロボット（TurtleBot3相当、SDFを自作でも可）と障害物のあるワールドを`worlds/`に置く
