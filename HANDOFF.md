@@ -92,7 +92,8 @@
 - **元のPCでpixi版の疎通を確認済み**（2026-09-28）: `rust-toolchain.toml`（1.97.0＋rustfmt/clippy）、`pixi.toml`（robostack-lyrical＋conda-forge、`ros-lyrical-ros-base`）で
   `pixi run cargo build` → `policy_node`が動き、偽スキャン（`ranges: [0.3, 3.0, 3.0, 3.0]`）で`angular.z=0.8`が返る
 - **元のPCでpixi版Gazeboの表示を確認済み**（2026-09-29）: `ros-lyrical-ros-gz`を追加し、`pixi run gz sim shapes.sdf`がWSLgで起動。RTFは約70%
-- `pixi.toml`/`pixi.lock`はコミットしてpush済み（`7bb895e`）。**次はサブPCで同じ環境を再現する**（6章の0-4）
+- `pixi.toml`/`pixi.lock`はコミットしてpush済み（`7bb895e`）
+- **サブPCでも同じ環境を再現できた**（2026-09-29）: `pixi install --locked`、ビルド、`policy_node`の疎通（`z: 0.8`）、Gazeboの表示（RTF 70%超、元のPCと同程度）。残りは秘書ノートの同期だけ（6章の0-4-7）
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -104,7 +105,9 @@
 
 - 作業PCは2台。**元のPC**（Ubuntu 26.04、apt版Lyrical、Rust 1.97。HANDOFFを書いた環境）と、
   **サブPC**（Ubuntu 24.04、ROS未導入、既定のstableは1.96だが1.97のツールチェーンはある。
-  WSLから見えるRAMは**11GB**。SP1の`cargo-prove`は2026-06-25ビルド、ツールチェーンは`succinct`）
+  SP1の`cargo-prove`は2026-06-25ビルド、ツールチェーンは`succinct`）
+  - ハード: Ryzen 5 5625U、**GPUはAMD Radeonの内蔵のみ（NVIDIAなし）**、Windows全体の物理RAMは16GB
+  - `.wslconfig`は`memory=12GB, swap=4GB`（WSLから見えるのは約11.7GB）。Windows自体に3〜4GB要るので、**WSLに15GBは割り当てられない**（上限は12〜13GB）
 - Lyricalは24.04ではTier3でaptのバイナリがないため、**両PCとも pixi + RoboStack（`https://prefix.dev/robostack-lyrical`）に統一する**
   - `pixi.toml`/`pixi.lock`をコミットし、もう片方は`pixi install`で同じ環境を作る
   - robostack-lyricalの`ros2-*`パッケージにも`share/<pkg>/rust`のバインディングが同梱されている（確認済み）。`ros-lyrical-*`は中身が空のエイリアス
@@ -136,7 +139,7 @@
 - Lyricalは主要メッセージのRustバインディングを`/opt/ros/lyrical/share/<pkg>/rust`に同梱している。
   **colconもrosidl_rustのcloneも不要**。`source /opt/ros/lyrical/setup.bash`のあとに`cargo build`で通る
 - `robot_nodes/package.xml`は将来colconで扱う場合に備えて置いてある（現状は使っていない）
-- **Gazebo（ros_gz）は未導入**。導入には`sudo apt install ros-lyrical-ros-gz`が必要で、ユーザーに実行してもらう
+- apt版のros_gzは未導入（pixi版で導入済みなので、apt版には入れない）
 - 参考用の`~/project/ros2_rust_ws`（ros2_rustのソースとexamples）は別物。こちらには混ぜない
 
 ```sh
@@ -164,10 +167,10 @@ cargo build && cargo test -p policy
    4. **サブPC（次はここから）**:
       1. 事前確認: `cc --version`（Rustのリンクに必要。無ければ`build-essential`）、ディスクの空き（`.pixi/`は数GBになる）
       2. `git pull`（未cloneなら`git clone git@github.com:niikun/zk-accident-forensics.git`）
-      3. pixiを導入（`curl -fsSL https://pixi.sh/install.sh | bash`）→ `pixi install --locked`（lockを書き換えずにそのとおり作る）
-      4. `rustc --version`が1.97.0になるか（`rust-toolchain.toml`で自動切り替え。rustfmt/clippyも自動で入る）
-      5. `pixi run cargo build` → 3章の手順で疎通確認
-      6. `pixi run gz sim shapes.sdf`でGazeboが表示されるか、RTFはいくつか
+      3. ✅ pixiを導入（pixi 0.81.0）→ `pixi install --locked`（lockは書き換わらず、`ROS_DISTRO=lyrical`、`share/sensor_msgs/rust`あり、2026-09-29）
+      4. ✅ `rustc --version`が1.97.0（`rust-toolchain.toml`で自動切り替え）
+      5. ✅ `pixi run cargo build`で`policy_node`をビルド（2026-09-29）→ 3章の手順で疎通確認し、`z: 0.8`が返った
+      6. ✅ `pixi run gz sim shapes.sdf`でGazeboが表示され、RTFは70%超（2026-09-29。サブPCはAMD内蔵GPUのみなので、描画はD3D12 (AMD Radeon)のはず）
       7. 秘書ノート（`~/company`）を`git pull`（7/19で止まっている）
 1. ✅ ros_gzを導入する（0-3で導入済み）
 2. 差動二輪＋LiDARのロボット（TurtleBot3相当、SDFを自作でも可）と障害物のあるワールドを`worlds/`に置く
@@ -198,7 +201,9 @@ cargo build && cargo test -p policy
 ## 8. リスクと保険
 
 - Gazeboが重い・WSLgで表示できない場合 → Rust製の2Dシミュレータ＋rerunで可視化に切り替える（課題は他ツール可）
-- RAM 15GBなので、SP1はcore/compressed証明まで。証明する区間は事故前後の数十ステップに絞る。Groth16ラップやオンチェーン検証はやらない
+- RAMは元のPCで15GB、サブPCで約12GB（増やせない）。SP1はcore/compressed証明まで。証明する区間は事故前後の数十ステップに絞る。Groth16ラップやオンチェーン検証はやらない
+  - **本番の証明は元のPCで作る**。サブPCは実行（`--execute`）とサイクル数の計測まで。サブPCで証明が必要なら、swapを増やして（例: `swap=16GB`）遅さを受け入れる
+  - サブPCでHello ZK Robotの`--prove`が通るかを測り、必要メモリの目安にする
 - 固定小数点化で精度が落ちたら、層を小さくするかビーム数を減らす
 - 大原則: **W2末までに合格ラインの動画を確保**し、その後に加点要素を積む
 
