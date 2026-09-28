@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-09-28
+最終更新: 2026-09-29
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -83,7 +83,7 @@
 
 **TODO**: 先行研究との差分を1枚の表にして、レポートの工夫点の核にする（W4〜W5）
 
-## 3. 現在の状態（2026-09-28）
+## 3. 現在の状態（2026-09-29）
 
 - 初回コミット済み: `crates/policy`（no_std、仮のルールベース`expert()`）と`crates/robot_nodes`（`policy_node`）
 - `policy_node`: `/scan`を24本に間引いて方策に渡し、`/cmd_vel`（`geometry_msgs/Twist`）に出す
@@ -91,6 +91,12 @@
 - `cargo test -p policy`はテスト1件（`turns_when_blocked`）
 - **元のPCでpixi版の疎通を確認済み**（2026-09-28）: `rust-toolchain.toml`（1.97.0＋rustfmt/clippy）、`pixi.toml`（robostack-lyrical＋conda-forge、`ros-lyrical-ros-base`）で
   `pixi run cargo build` → `policy_node`が動き、偽スキャン（`ranges: [0.3, 3.0, 3.0, 3.0]`）で`angular.z=0.8`が返る
+- **元のPCでpixi版Gazeboの表示を確認済み**（2026-09-29）: `ros-lyrical-ros-gz`を追加し、`pixi run gz sim shapes.sdf`がWSLgで起動。RTFは約70%
+- `pixi.toml`/`pixi.lock`はコミットしてpush済み（`7bb895e`）。**次はサブPCで同じ環境を再現する**（6章の0-4）
+- 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
+  1. `pixi run ./target/debug/policy_node`
+  2. `pixi run ros2 topic echo /cmd_vel`
+  3. `pixi run ros2 topic pub -r 1 /scan sensor_msgs/msg/LaserScan "{range_max: 10.0, ranges: [0.3, 3.0, 3.0, 3.0]}"` → 2に`z: 0.8`が出れば成功
 
 ## 4. 環境の事実（ハマりどころ）
 
@@ -113,6 +119,12 @@
     （`LD_LIBRARY_PATH`で解決しないのは、Gazeboの描画がWSLgのGPUドライバとぶつかるのを避けるため。ターゲットを限定するのはSP1 guestのビルドに混ぜないため）
   - RPATHは絶対パスなので、バイナリはPCごとに`pixi run cargo build`で作る。apt版からの移行時は最初に`cargo clean`
   - 実行はすべて`pixi run ...`経由（例: `pixi run ros2 topic echo /cmd_vel`）
+- **Gazeboの描画（元のPC、未確定）**
+  - pixi環境にはlibglvnd（OpenGLの振り分け役）しか入らず、Mesaのドライバは入らない。描画はUbuntu側のMesa（`d3d12`ドライバ＝WSLg経由のGPU）に回る
+  - RTFが約70%。`/usr/lib/wsl/lib`にIntel用とNVIDIA用の両方があるため、**Intelの内蔵GPUで描画している可能性**がある
+  - 確認方法: `sudo apt install mesa-utils` → `glxinfo -B | grep -E "renderer|Device"`（D3D12 (NVIDIA …) / D3D12 (Intel …) / llvmpipe=CPU描画）
+  - Intelだった場合は`MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA`で切り替えられるか試し、効けば`[activation.env]`に追加する
+  - 急ぎではない。デモ収集はGUIなし（`gz sim -s`）で回せる
 - 秘書ノート（`~/company`、`niikun/company`）はgitで同期する。サブPCは7/19で止まっているのでpullが必要
 
 ### 元のPCの事実（apt版。pixi移行後は参考）
@@ -149,8 +161,15 @@ cargo build && cargo test -p policy
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
    2. ✅ 元のPC: pixiを導入し`pixi init` → `pixi add ros-lyrical-ros-base` → `pixi run cargo build`、`ros2 topic pub`での疎通をapt版と比較（4章のハマりどころを参照）
    3. ✅ `pixi add ros-lyrical-ros-gz`でGazeboのGUI表示を確認し（元のPC）、`pixi.toml`/`pixi.lock`/`.gitignore`（`.pixi/`）をコミット
-   4. サブPC: `git pull` → `pixi install` → 同じ確認
-1. ros_gzを導入する（pixi統一後は上の0-3で入る）
+   4. **サブPC（次はここから）**:
+      1. 事前確認: `cc --version`（Rustのリンクに必要。無ければ`build-essential`）、ディスクの空き（`.pixi/`は数GBになる）
+      2. `git pull`（未cloneなら`git clone git@github.com:niikun/zk-accident-forensics.git`）
+      3. pixiを導入（`curl -fsSL https://pixi.sh/install.sh | bash`）→ `pixi install --locked`（lockを書き換えずにそのとおり作る）
+      4. `rustc --version`が1.97.0になるか（`rust-toolchain.toml`で自動切り替え。rustfmt/clippyも自動で入る）
+      5. `pixi run cargo build` → 3章の手順で疎通確認
+      6. `pixi run gz sim shapes.sdf`でGazeboが表示されるか、RTFはいくつか
+      7. 秘書ノート（`~/company`）を`git pull`（7/19で止まっている）
+1. ✅ ros_gzを導入する（0-3で導入済み）
 2. 差動二輪＋LiDARのロボット（TurtleBot3相当、SDFを自作でも可）と障害物のあるワールドを`worlds/`に置く
 3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる
 4. 起動手順をREADMEかスクリプトにまとめる
