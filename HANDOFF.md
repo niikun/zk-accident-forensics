@@ -94,6 +94,7 @@
 - **元のPCでpixi版Gazeboの表示を確認済み**（2026-09-29）: `ros-lyrical-ros-gz`を追加し、`pixi run gz sim shapes.sdf`がWSLgで起動。RTFは約70%
 - `pixi.toml`/`pixi.lock`はコミットしてpush済み（`7bb895e`）
 - **サブPCでも同じ環境を再現できた**（2026-09-29）: `pixi install --locked`、ビルド、`policy_node`の疎通（`z: 0.8`）、Gazeboの表示（RTF 70%超、元のPCと同程度）。残りは秘書ノートの同期だけ（6章の0-4-7）
+- **SDFの自作を開始**（2026-09-29、サブPC）: `worlds/forensics.sdf`（お手本のコピー、`vehicle_green`はコメントアウト、構文チェック済み、未コミット）。次は6章の2
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -173,9 +174,33 @@ cargo build && cargo test -p policy
       6. ✅ `pixi run gz sim shapes.sdf`でGazeboが表示され、RTFは70%超（2026-09-29。サブPCはAMD内蔵GPUのみなので、描画はD3D12 (AMD Radeon)のはず）
       7. 秘書ノート（`~/company`）を`git pull`（7/19で止まっている）
 1. ✅ ros_gzを導入する（0-3で導入済み）
-2. 差動二輪＋LiDARのロボット（TurtleBot3相当、SDFを自作でも可）と障害物のあるワールドを`worlds/`に置く
-3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる
-4. 起動手順をREADMEかスクリプトにまとめる
+2. **（作業中）** 差動二輪＋LiDARのロボットと障害物のあるワールドを`worlds/`に置く。**SDFは自作する**（2026-09-29決定。
+   TurtleBot3は使わない。LiDARのビーム数・車輪間隔・速度などを自分で把握し、S3の公開パラメータに直結させるため）
+   - ✅ gz-simのお手本`diff_drive.sdf`を`worlds/forensics.sdf`にコピーし、`vehicle_green`をコメントアウトした。`gz sdf -k`は`Valid.`（サブPC）
+   - ⬜ 起動して、`gz topic -t /model/vehicle_blue/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.3}'`で青い車が進むか確認
+   - ⬜ `worlds/`をコミット（まだgitで追跡されていない）
+   - ⬜ `vehicle_green`を削除する（XMLのコメントは入れ子にできないので、コメントアウトのまま育てない）
+   - ⬜ ワールドにSensorsシステム（`<render_engine>ogre2</render_engine>`）を足し、車体に`gpu_lidar`を付け、障害物（box）を置く
+   - ⬜ `gz topic -e -t <lidarのトピック>`で値が出るか確認
+3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる（設定は`config/bridge.yaml`に置く案）
+4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）
+
+### SDF作りのメモ
+
+- お手本（`.pixi/envs/default/share/`の下。**直接編集しない**。`pixi install`で上書きされ、gitにも入らない）
+  - `gz/gz-sim/worlds/diff_drive.sdf`: 車体・車輪・キャスターの組み方、`gz-sim-diff-drive-system`
+  - `gz/gz-sim/worlds/visualize_lidar.sdf`: `gpu_lidar`の書き方と、ワールドに要るシステム（Physics、Sensors＋`ogre2`、SceneBroadcaster）
+  - `ros_gz_sim_demos/config/diff_drive.yaml`、`gpu_lidar.yaml`: bridgeのYAMLの書き方
+- 構成: 最初はワールドとロボットを`worlds/forensics.sdf`の1ファイルに書く。育ったら`models/robot/model.sdf`に分けて`<include>`する
+- **ハマりどころ: ビーム0の向き**。`policy::expert()`（`crates/policy/src/lib.rs:16`）は`beams[0]`が真正面、`beams[1]`と`beams[23]`がその両隣という前提。
+  gzのlidarを`min_angle=-π, max_angle=π`にすると`ranges[0]`は真後ろを向く。SDFの角度範囲で合わせるか、`downsample()`で回転させるかはユーザーが決める
+  （方策の入力の定義になり、SP1 guestと共有する）。`samples`は24の倍数にし、360度で始点と終点が重複しないようにする
+- **SDFの数値はS3の公開パラメータになる**ので、決めたら表にして残す
+  - `max_linear_velocity`、`min_linear_acceleration`（最大減速度） → 停止距離
+  - LiDARの`update_rate` → 方策の周期（反応時間の下限）
+  - LiDARの最大距離と、障害物が「突然出現する」距離の関係
+  - 今の`expert()`（0.2m/sで直進、前方0.5m未満で旋回）が、SDFの加速度制限と矛盾しないか
+- 考えておく問い: `cmd_vel`のトピック名はなぜ`/model/vehicle_blue/...`になるのか。ROSの`/cmd_vel`と、SDFの`<topic>`とbridgeのYAMLのどちらで名前を合わせるか
 
 ### サブPCでROSなしでできること（W3の予習）
 
