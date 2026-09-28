@@ -1,0 +1,15 @@
+[workspace]
+authors = ["niikun <niikun0209@gmail.com>"]
+channels = ["https://prefix.dev/robostack-lyrical","conda-forge"]
+name = "zk_accident_forensics"
+platforms = ["linux-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+ros-lyrical-ros-base = ">=0.13.0,<0.14"
+
+[activation.env]
+CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-Wl,-rpath,$CONDA_PREFIX/lib"
+

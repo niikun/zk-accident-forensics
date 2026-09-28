@@ -89,6 +89,8 @@
 - `policy_node`: `/scan`を24本に間引いて方策に渡し、`/cmd_vel`（`geometry_msgs/Twist`）に出す
 - 疎通確認済み: `ros2 topic pub`で前方0.3mの偽スキャンを流すと`angular.z=0.8`（停止・旋回）が返る
 - `cargo test -p policy`はテスト1件（`turns_when_blocked`）
+- **元のPCでpixi版の疎通を確認済み**（2026-09-28）: `rust-toolchain.toml`（1.97.0＋rustfmt/clippy）、`pixi.toml`（robostack-lyrical＋conda-forge、`ros-lyrical-ros-base`）で
+  `pixi run cargo build` → `policy_node`が動き、偽スキャン（`ranges: [0.3, 3.0, 3.0, 3.0]`）で`angular.z=0.8`が返る
 
 ## 4. 環境の事実（ハマりどころ）
 
@@ -103,6 +105,13 @@
   - apt版Lyricalの`setup.bash`をsourceしない（pixi環境と混ざる）。conda baseの自動有効化にも注意
   - WSLgでpixi版GazeboのGUIが表示されるかは未確認。駄目ならサブPCにUbuntu 26.04のディストリを追加しaptで入れる
 - Rustの版は`rust-toolchain.toml`で1.97.0に固定する
+- **pixiのハマりどころ（元のPCで確認）**
+  - チャンネルは`"https://prefix.dev/robostack-lyrical"`とURLで書く。短い名前だと`conda.anaconda.org`を見に行って404になる。順番はrobostackが先、conda-forgeが後（strict priority）
+  - **pixiは`LD_LIBRARY_PATH`を設定しない**（condaはRPATHで解決する流儀）。cargoで作ったバイナリは`pixi run`の中でも`librcl.so: cannot open shared object file`で落ちる。
+    `[activation.env]`に`CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-Wl,-rpath,$CONDA_PREFIX/lib"`を書いてRPATHを埋め込む
+    （`LD_LIBRARY_PATH`で解決しないのは、Gazeboの描画がWSLgのGPUドライバとぶつかるのを避けるため。ターゲットを限定するのはSP1 guestのビルドに混ぜないため）
+  - RPATHは絶対パスなので、バイナリはPCごとに`pixi run cargo build`で作る。apt版からの移行時は最初に`cargo clean`
+  - 実行はすべて`pixi run ...`経由（例: `pixi run ros2 topic echo /cmd_vel`）
 - 秘書ノート（`~/company`、`niikun/company`）はgitで同期する。サブPCは7/19で止まっているのでpullが必要
 
 ### 元のPCの事実（apt版。pixi移行後は参考）
@@ -136,8 +145,8 @@ cargo build && cargo test -p policy
 ## 6. 次にやること（W1の残り）
 
 0. 環境をpixiに統一する（4章。ユーザーが実施）
-   1. 元のPC: 秘書ノートをpush、`rust-toolchain.toml`を追加
-   2. 元のPC: pixiを導入し`pixi init` → `pixi add ros-lyrical-ros-base` → `pixi run cargo build`、`ros2 topic pub`での疎通をapt版と比較
+   1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
+   2. ✅ 元のPC: pixiを導入し`pixi init` → `pixi add ros-lyrical-ros-base` → `pixi run cargo build`、`ros2 topic pub`での疎通をapt版と比較（4章のハマりどころを参照）
    3. `pixi add ros-lyrical-ros-gz`でGazeboのGUI表示を確認し、`pixi.toml`/`pixi.lock`/`.gitignore`（`.pixi/`）をコミット
    4. サブPC: `git pull` → `pixi install` → 同じ確認
 1. ros_gzを導入する（pixi統一後は上の0-3で入る）
