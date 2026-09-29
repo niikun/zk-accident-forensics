@@ -94,7 +94,7 @@
 - **元のPCでpixi版Gazeboの表示を確認済み**（2026-09-29）: `ros-lyrical-ros-gz`を追加し、`pixi run gz sim shapes.sdf`がWSLgで起動。RTFは約70%
 - `pixi.toml`/`pixi.lock`はコミットしてpush済み（`7bb895e`）
 - **サブPCでも同じ環境を再現できた**（2026-09-29）: `pixi install --locked`、ビルド、`policy_node`の疎通（`z: 0.8`）、Gazeboの表示（RTF 70%超、元のPCと同程度）。残りは秘書ノートの同期だけ（6章の0-4-7）
-- **SDFの自作を開始**（2026-09-29、サブPC）: `worlds/forensics.sdf`（お手本のコピー、`vehicle_green`はコメントアウト、構文チェック済み、未コミット）。次は6章の2
+- **SDFの自作を開始**（2026-09-29、サブPC）: `worlds/forensics.sdf`（お手本のコピー、`vehicle_green`はコメントアウト、構文チェック済み、`c8cb379`でコミット済み）。次は6章の2
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -177,8 +177,8 @@ cargo build && cargo test -p policy
 2. **（作業中）** 差動二輪＋LiDARのロボットと障害物のあるワールドを`worlds/`に置く。**SDFは自作する**（2026-09-29決定。
    TurtleBot3は使わない。LiDARのビーム数・車輪間隔・速度などを自分で把握し、S3の公開パラメータに直結させるため）
    - ✅ gz-simのお手本`diff_drive.sdf`を`worlds/forensics.sdf`にコピーし、`vehicle_green`をコメントアウトした。`gz sdf -k`は`Valid.`（サブPC）
-   - ⬜ 起動して、`gz topic -t /model/vehicle_blue/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.3}'`で青い車が進むか確認
-   - ⬜ `worlds/`をコミット（まだgitで追跡されていない）
+   - ✅ 起動して、`gz topic -t /model/vehicle_blue/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.3}'`で青い車が進むことを確認（2026-09-29、サブPC）
+   - ✅ `worlds/`をコミット（`c8cb379`）
    - ⬜ `vehicle_green`を削除する（XMLのコメントは入れ子にできないので、コメントアウトのまま育てない）
    - ⬜ ワールドにSensorsシステム（`<render_engine>ogre2</render_engine>`）を足し、車体に`gpu_lidar`を付け、障害物（box）を置く
    - ⬜ `gz topic -e -t <lidarのトピック>`で値が出るか確認
