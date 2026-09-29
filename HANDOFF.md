@@ -94,7 +94,7 @@
 - **元のPCでpixi版Gazeboの表示を確認済み**（2026-09-29）: `ros-lyrical-ros-gz`を追加し、`pixi run gz sim shapes.sdf`がWSLgで起動。RTFは約70%
 - `pixi.toml`/`pixi.lock`はコミットしてpush済み（`7bb895e`）
 - **サブPCでも同じ環境を再現できた**（2026-09-29）: `pixi install --locked`、ビルド、`policy_node`の疎通（`z: 0.8`）、Gazeboの表示（RTF 70%超、元のPCと同程度）。残りは秘書ノートの同期だけ（6章の0-4-7）
-- **SDFの自作を開始**（2026-09-29、サブPC）: `worlds/forensics.sdf`（お手本のコピー、`vehicle_green`はコメントアウト、構文チェック済み、`c8cb379`でコミット済み）。次は6章の2
+- **SDFの自作を開始**（2026-09-29、サブPC）: `worlds/forensics.sdf`（お手本のコピー、`vehicle_green`はコメントアウト、構文チェック済み、`c8cb379`でコミット済み）。青い車が`cmd_vel`で進むことを確認。LiDARは低い位置に付け、そのために車体を小さく作り直す方針に決定（6章の2）
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -181,6 +181,11 @@ cargo build && cargo test -p policy
    - ✅ `worlds/`をコミット（`c8cb379`）
    - ⬜ `vehicle_green`を削除する（XMLのコメントは入れ子にできないので、コメントアウトのまま育てない）
    - ⬜ ワールドにSensorsシステム（`<render_engine>ogre2</render_engine>`）を足し、車体に`gpu_lidar`を付け、障害物（box）を置く
+     - お手本は`visualize_lidar.sdf`の`vehicle_blue`（276行目〜）。LiDAR付きの差動二輪がそのまま入っている。`lidar_link`（312行目）に`gpu_lidar`（336行目）があり、`lidar_sensor_joint`（467行目、`type='fixed'`）で`chassis`につながる
+     - **LiDARは低く付ける**（2026-09-29決定。実機でも膝の高さが多く、歩行者の脚や低い障害物が見える）
+     - そのままでは下げられない: 今のchassisは2.0×1.0×0.57m（高さ0.216〜0.784m）。この範囲に入れると`gpu_lidar`が自分の車体を写す。
+       `<range><min>`で捨てると1m以内の障害物も見えなくなる → **車体を小さく・低く作り直し、その上にLiDARを載せる**
+     - ⬜ ユーザーが車体の寸法（幅・長さ・高さ）とLiDARの高さを決める（参考: TurtleBot3 Burgerは約0.14×0.18m、LiDAR高さ約0.17m）。障害物の高さはスキャン面より高くする
    - ⬜ `gz topic -e -t <lidarのトピック>`で値が出るか確認
 3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる（設定は`config/bridge.yaml`に置く案）
 4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）
@@ -200,6 +205,8 @@ cargo build && cargo test -p policy
   - LiDARの`update_rate` → 方策の周期（反応時間の下限）
   - LiDARの最大距離と、障害物が「突然出現する」距離の関係
   - 今の`expert()`（0.2m/sで直進、前方0.5m未満で旋回）が、SDFの加速度制限と矛盾しないか
+- **`<pose>`の基準**（SDF 1.x、`relative_to`なし）: `<model>`はワールドから、`<link>`は**モデルのフレームから**測る（jointの親リンクからではない）。
+  例: お手本では、モデルz=0.325＋chassis 0.175 → chassisはワールドz=0.5。`lidar_link`の0.5もモデル基準なので、ワールドz=0.825（chassis上面0.784の直上）
 - 考えておく問い: `cmd_vel`のトピック名はなぜ`/model/vehicle_blue/...`になるのか。ROSの`/cmd_vel`と、SDFの`<topic>`とbridgeのYAMLのどちらで名前を合わせるか
 
 ### サブPCでROSなしでできること（W3の予習）
