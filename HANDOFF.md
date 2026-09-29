@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-09-29
+最終更新: 2026-09-30
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -95,6 +95,8 @@
 - `pixi.toml`/`pixi.lock`はコミットしてpush済み（`7bb895e`）
 - **サブPCでも同じ環境を再現できた**（2026-09-29）: `pixi install --locked`、ビルド、`policy_node`の疎通（`z: 0.8`）、Gazeboの表示（RTF 70%超、元のPCと同程度）。残りは秘書ノートの同期だけ（6章の0-4-7）
 - **SDFの自作を開始**（2026-09-29、サブPC）: `worlds/forensics.sdf`（お手本のコピー、`vehicle_green`はコメントアウト、構文チェック済み、`c8cb379`でコミット済み）。青い車が`cmd_vel`で進むことを確認。LiDARは低い位置に付け、そのために車体を小さく作り直す方針に決定（6章の2）
+- **車体の縮小を作業中**（2026-09-30、未コミット）: `vehicle_green`を削除し、`vehicle_blue`に`lidar_link`＋`gpu_lidar`を追加、chassisを0.14×0.18×0.1mにした。`gz sdf -k`は`Valid.`。
+  ただし位置・車輪・物理の値が大きな車のまま残っていて、部品の位置が合っていない（問題の一覧は6章の2）
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -179,13 +181,39 @@ cargo build && cargo test -p policy
    - ✅ gz-simのお手本`diff_drive.sdf`を`worlds/forensics.sdf`にコピーし、`vehicle_green`をコメントアウトした。`gz sdf -k`は`Valid.`（サブPC）
    - ✅ 起動して、`gz topic -t /model/vehicle_blue/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.3}'`で青い車が進むことを確認（2026-09-29、サブPC）
    - ✅ `worlds/`をコミット（`c8cb379`）
-   - ⬜ `vehicle_green`を削除する（XMLのコメントは入れ子にできないので、コメントアウトのまま育てない）
+   - ✅ `vehicle_green`を削除した（2026-09-30、未コミット）
    - ⬜ ワールドにSensorsシステム（`<render_engine>ogre2</render_engine>`）を足し、車体に`gpu_lidar`を付け、障害物（box）を置く
      - お手本は`visualize_lidar.sdf`の`vehicle_blue`（276行目〜）。LiDAR付きの差動二輪がそのまま入っている。`lidar_link`（312行目）に`gpu_lidar`（336行目）があり、`lidar_sensor_joint`（467行目、`type='fixed'`）で`chassis`につながる
      - **LiDARは低く付ける**（2026-09-29決定。実機でも膝の高さが多く、歩行者の脚や低い障害物が見える）
      - そのままでは下げられない: 今のchassisは2.0×1.0×0.57m（高さ0.216〜0.784m）。この範囲に入れると`gpu_lidar`が自分の車体を写す。
        `<range><min>`で捨てると1m以内の障害物も見えなくなる → **車体を小さく・低く作り直し、その上にLiDARを載せる**
      - ⬜ ユーザーが車体の寸法（幅・長さ・高さ）とLiDARの高さを決める（参考: TurtleBot3 Burgerは約0.14×0.18m、LiDAR高さ約0.17m）。障害物の高さはスキャン面より高くする
+     - **車体を縮めたら位置が合わない（2026-09-30）**。原因: `<size>`/`<radius>`だけ小さくし、`<pose>`・collision・inertia・diff-driveの値が大きな車のまま。
+       **2回目の調整後（2026-09-30）**: modelのz=0.325→0.05、lidar_linkのz=0.1→0.15、車輪のy=±0.09、車輪のcollisionを0.1に揃えた、キャスターのx=-0.07。
+       直った点: 車輪のvisual/collisionの不一致、キャスターの前後位置、LiDARが車体の中心に埋まる問題。
+       地面からの高さ（modelのz 0.05＋linkのz）で見ると、まだ合っていない:
+
+       | 部品 | 中心の高さ | 下端 | 上端 | 問題 |
+       |---|---|---|---|---|
+       | chassis | 0.15 | 0.10 | 0.20 | OK（床から10cm） |
+       | lidar_link（箱0.05） | 0.20 | 0.175 | 0.225 | 下半分が車体に埋まる。**スキャン面0.20＝車体の上面**で、光線が上面をかすめる（自分を写すかは数値誤差次第） |
+       | 左右の車輪（r=0.1） | 0.025 | **-0.075** | 0.125 | **地面に7.5cm沈む**（起動時に物理が押し返して跳ねる） |
+       | キャスター（visual 0.1 / collision 0.2） | -0.075 | **-0.275** | 0.125 | 地面に深く沈む。visualとcollisionの半径も不一致 |
+
+       - **車輪が車体より大きい**: 車輪の直径0.2mに対し、車体は長さ0.14m、高さ0.1m（参考: TurtleBot3の車輪の半径は約0.033m）。先に車輪の半径rを決める
+       - 未着手のまま: inertiaと質量（車輪2kg＞車体1.14kg）、diff-driveの`wheel_separation` 1.25、`wheel_radius` 0.3
+       - 学び: **車輪の中心の地面からの高さ＝r**（下端が地面にちょうど接する）。キャスターも中心の高さ＝rc。センサーは車体の上面からはっきり離す
+       - 1回目の調整前の状態（参考）: model z=0.325、lidar_linkがchassisの中心と同じ位置、車輪がy=±0.07で車体にめり込む、車輪のcollisionが0.3、キャスターがx=-0.957
+
+       ワールド全体の問題: Sensorsシステム（`ogre2`）がまだ無い（LiDARが値を出さない）、お手本の`model_with_lidar`（x=4の静的な箱）が残っている、LiDARのトピックが`lidar2`
+     - ⬜ **作り直しの方針（提案）**: 少しずつ手で直さず、設計値から全poseを計算する
+       1. modelのpose zを0にし、原点を「車軸の真下の地面」に置く（各linkのz＝地面からの高さになる）
+       2. 設計値を先に決める: 車輪半径r、車体L×W×H、床から車体の底までc、キャスター半径rc、LiDARの箱の高さh
+       3. 車輪 (0, ±y_w, r)（y_wはW/2より外）、キャスター (後ろ寄りのx, 0, rc)、chassis (x, 0, c+H/2)、LiDAR (x, 0, c+H+h/2)
+       4. visualとcollisionは同じ寸法。`wheel_separation`=2·y_w、`wheel_radius`=r
+       5. inertiaを箱・球・円柱の公式で計算し直す（例: 箱の`ixx = m(W²+H²)/12`）
+       6. GUIの Transparent＋Collisions表示で、collisionがvisualと重なるか目で確かめる
+     - ⬜ 次はユーザーがmodelのzを0にし、r、c、H、rc（とL、W）を決めて見せる → 破綻がないか一緒に確認してからposeを計算する
    - ⬜ `gz topic -e -t <lidarのトピック>`で値が出るか確認
 3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる（設定は`config/bridge.yaml`に置く案）
 4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）
