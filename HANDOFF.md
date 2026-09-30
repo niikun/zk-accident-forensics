@@ -83,7 +83,7 @@
 
 **TODO**: 先行研究との差分を1枚の表にして、レポートの工夫点の核にする（W4〜W5）
 
-## 3. 現在の状態（2026-09-29）
+## 3. 現在の状態（2026-09-30）
 
 - 初回コミット済み: `crates/policy`（no_std、仮のルールベース`expert()`）と`crates/robot_nodes`（`policy_node`）
 - `policy_node`: `/scan`を24本に間引いて方策に渡し、`/cmd_vel`（`geometry_msgs/Twist`）に出す
@@ -95,8 +95,10 @@
 - `pixi.toml`/`pixi.lock`はコミットしてpush済み（`7bb895e`）
 - **サブPCでも同じ環境を再現できた**（2026-09-29）: `pixi install --locked`、ビルド、`policy_node`の疎通（`z: 0.8`）、Gazeboの表示（RTF 70%超、元のPCと同程度）。残りは秘書ノートの同期だけ（6章の0-4-7）
 - **SDFの自作を開始**（2026-09-29、サブPC）: `worlds/forensics.sdf`（お手本のコピー、`vehicle_green`はコメントアウト、構文チェック済み、`c8cb379`でコミット済み）。青い車が`cmd_vel`で進むことを確認。LiDARは低い位置に付け、そのために車体を小さく作り直す方針に決定（6章の2）
-- **車体の縮小を作業中**（2026-09-30、未コミット）: `vehicle_green`を削除し、`vehicle_blue`に`lidar_link`＋`gpu_lidar`を追加、chassisを0.14×0.18×0.1mにした。`gz sdf -k`は`Valid.`。
-  ただし位置・車輪・物理の値が大きな車のまま残っていて、部品の位置が合っていない（問題の一覧は6章の2）
+- **小型の車体が完成**（2026-09-30、サブPC）: `vehicle_blue`を小型に作り直し、`lidar_link`＋`gpu_lidar`を載せた（設計値は6章の2の表）。`gz sdf -k`は`Valid.`。
+  GUIなしの計測で、前進0.300m/s・旋回0.500rad/sが指令どおりに出て、停止時のつんのめりもない（pitch 0度）。
+  `7060743`までコミット済み。車輪とキャスターのinertiaの最終修正（0.0001 / 0.00005）は**未コミット**
+- **LiDARが値を出すようになった**（2026-09-30、未コミット）: ワールドにSensorsシステムを追加し、`/lidar2`から`ranges`が届くことを確認（障害物がないので全部`inf`）。次は障害物を置いて距離を確かめる（6章の2）
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -181,42 +183,42 @@ cargo build && cargo test -p policy
    - ✅ gz-simのお手本`diff_drive.sdf`を`worlds/forensics.sdf`にコピーし、`vehicle_green`をコメントアウトした。`gz sdf -k`は`Valid.`（サブPC）
    - ✅ 起動して、`gz topic -t /model/vehicle_blue/cmd_vel -m gz.msgs.Twist -p 'linear: {x: 0.3}'`で青い車が進むことを確認（2026-09-29、サブPC）
    - ✅ `worlds/`をコミット（`c8cb379`）
-   - ✅ `vehicle_green`を削除した（2026-09-30、未コミット）
-   - ⬜ ワールドにSensorsシステム（`<render_engine>ogre2</render_engine>`）を足し、車体に`gpu_lidar`を付け、障害物（box）を置く
-     - お手本は`visualize_lidar.sdf`の`vehicle_blue`（276行目〜）。LiDAR付きの差動二輪がそのまま入っている。`lidar_link`（312行目）に`gpu_lidar`（336行目）があり、`lidar_sensor_joint`（467行目、`type='fixed'`）で`chassis`につながる
-     - **LiDARは低く付ける**（2026-09-29決定。実機でも膝の高さが多く、歩行者の脚や低い障害物が見える）
-     - そのままでは下げられない: 今のchassisは2.0×1.0×0.57m（高さ0.216〜0.784m）。この範囲に入れると`gpu_lidar`が自分の車体を写す。
-       `<range><min>`で捨てると1m以内の障害物も見えなくなる → **車体を小さく・低く作り直し、その上にLiDARを載せる**
-     - ⬜ ユーザーが車体の寸法（幅・長さ・高さ）とLiDARの高さを決める（参考: TurtleBot3 Burgerは約0.14×0.18m、LiDAR高さ約0.17m）。障害物の高さはスキャン面より高くする
-     - **車体を縮めたら位置が合わない（2026-09-30）**。原因: `<size>`/`<radius>`だけ小さくし、`<pose>`・collision・inertia・diff-driveの値が大きな車のまま。
-       **2回目の調整後（2026-09-30）**: modelのz=0.325→0.05、lidar_linkのz=0.1→0.15、車輪のy=±0.09、車輪のcollisionを0.1に揃えた、キャスターのx=-0.07。
-       直った点: 車輪のvisual/collisionの不一致、キャスターの前後位置、LiDARが車体の中心に埋まる問題。
-       地面からの高さ（modelのz 0.05＋linkのz）で見ると、まだ合っていない:
+   - ✅ `vehicle_green`を削除した（2026-09-30）
+   - ✅ **車体を小型に作り直した**（2026-09-30、サブPC）。LiDARを低く付けるため（実機でも膝の高さが多く、歩行者の脚や低い障害物が見える）。
+     元のchassis（2.0×1.0×0.57m）にLiDARを入れると自分の車体を写すので、小さく・低くした。modelのpose zを0にして、各linkのz＝地面からの高さにしている
 
-       | 部品 | 中心の高さ | 下端 | 上端 | 問題 |
-       |---|---|---|---|---|
-       | chassis | 0.15 | 0.10 | 0.20 | OK（床から10cm） |
-       | lidar_link（箱0.05） | 0.20 | 0.175 | 0.225 | 下半分が車体に埋まる。**スキャン面0.20＝車体の上面**で、光線が上面をかすめる（自分を写すかは数値誤差次第） |
-       | 左右の車輪（r=0.1） | 0.025 | **-0.075** | 0.125 | **地面に7.5cm沈む**（起動時に物理が押し返して跳ねる） |
-       | キャスター（visual 0.1 / collision 0.2） | -0.075 | **-0.275** | 0.125 | 地面に深く沈む。visualとcollisionの半径も不一致 |
+     | 部品 | 形・寸法 [m] | pose z | 地面からの範囲 [m] | mass [kg] | inertia |
+     |---|---|---|---|---|---|
+     | model `vehicle_blue` | — | 0（x=0, y=2） | — | — | — |
+     | chassis | 箱 0.14×0.18×0.05（L×W×H） | 0.055 | 0.03〜0.08（床とのすき間c=0.03） | 0.8 | 0.00233 / 0.00147 / 0.00347 |
+     | lidar_link | 箱 0.05角 | 0.105 | 0.08〜0.13（**スキャン面 約0.105**） | 0.1 | 0.0000416667 ×3 |
+     | 左右の車輪 | 球 r=0.05、y=±0.09 | 0.05 | 0〜0.10 | 0.1 | 0.0001 ×3 |
+     | キャスター | 球 r=0.05、x=-0.07 | 0.05 | 0〜0.10 | 0.05 | 0.00005 ×3 |
+     | diff-drive | `wheel_separation` 0.18、`wheel_radius` 0.05 | | | | |
 
-       - **車輪が車体より大きい**: 車輪の直径0.2mに対し、車体は長さ0.14m、高さ0.1m（参考: TurtleBot3の車輪の半径は約0.033m）。先に車輪の半径rを決める
-       - 未着手のまま: inertiaと質量（車輪2kg＞車体1.14kg）、diff-driveの`wheel_separation` 1.25、`wheel_radius` 0.3
-       - 学び: **車輪の中心の地面からの高さ＝r**（下端が地面にちょうど接する）。キャスターも中心の高さ＝rc。センサーは車体の上面からはっきり離す
-       - 1回目の調整前の状態（参考）: model z=0.325、lidar_linkがchassisの中心と同じ位置、車輪がy=±0.07で車体にめり込む、車輪のcollisionが0.3、キャスターがx=-0.957
-
-       ワールド全体の問題: Sensorsシステム（`ogre2`）がまだ無い（LiDARが値を出さない）、お手本の`model_with_lidar`（x=4の静的な箱）が残っている、LiDARのトピックが`lidar2`
-     - ⬜ **作り直しの方針（提案）**: 少しずつ手で直さず、設計値から全poseを計算する
-       1. modelのpose zを0にし、原点を「車軸の真下の地面」に置く（各linkのz＝地面からの高さになる）
-       2. 設計値を先に決める: 車輪半径r、車体L×W×H、床から車体の底までc、キャスター半径rc、LiDARの箱の高さh
-       3. 車輪 (0, ±y_w, r)（y_wはW/2より外）、キャスター (後ろ寄りのx, 0, rc)、chassis (x, 0, c+H/2)、LiDAR (x, 0, c+H+h/2)
-       4. visualとcollisionは同じ寸法。`wheel_separation`=2·y_w、`wheel_radius`=r
-       5. inertiaを箱・球・円柱の公式で計算し直す（例: 箱の`ixx = m(W²+H²)/12`）
-       6. GUIの Transparent＋Collisions表示で、collisionがvisualと重なるか目で確かめる
-     - ⬜ 次はユーザーがmodelのzを0にし、r、c、H、rc（とL、W）を決めて見せる → 破綻がないか一緒に確認してからposeを計算する
-   - ⬜ `gz topic -e -t <lidarのトピック>`で値が出るか確認
+     - 計算式: 車輪・キャスターの中心z＝半径、chassisのz＝c＋H/2、LiDARのz＝c＋H＋h/2。箱のinertiaは`ixx=m(W²+H²)/12`、`iyy=m(L²+H²)/12`、`izz=m(L²+W²)/12`、球は`2/5·m·r²`
+     - 計測（GUIなし、シミュレーション内の時刻で）: 前進0.300m/s、旋回0.500rad/s（指令どおり）、停止時のpitch 0度、roll 0度
+     - 見た目だけの残り: 車輪（y=±0.09）の半分が車体に埋まっている。外に出すなら±0.14にして`wheel_separation`も合わせる
+     - **学び（2026-09-30）**
+       - `<pose>`は中心の位置。linkのzはmodelのzに足される。下端が地面にちょうど接するのは「中心の高さ＝半径」のとき
+       - `<size>`/`<radius>`だけを変えると、pose・collision・inertia・diff-driveが大きな車のまま残る。**寸法を変えたら全部を計算し直す**
+       - **diff-driveの`wheel_radius`が実際と違うと、速度が比率どおりにずれる**（0.3のままで実際は1/6の速度）。odometryも同じ間違った値で計算するので「走った」と嘘をつく。実際の位置は`/world/<world>/pose/info`で見る
+       - **inertiaが大きすぎると、ブレーキで前につんのめる**（車輪のinertiaが約60倍で、停止時にpitch約31度＝車体の前が接地）。車輪の反トルクが重心の復元トルクを上回るため。キャスターが後ろだけなので前に支えがない。**massを変えたらinertiaも必ず計算し直す**
+       - 起動中のGUIと別にテストするときは`GZ_PARTITION=<名前>`で通信を分ける（分けないと指令がGUIの車にも届く）
+       - `gz topic -p`の最初の1回は接続前に送られて落ちることがある。数回送る
+       - `gz`はpixi環境にしかない。`pixi run gz sdf -k worlds/forensics.sdf`のように実行する
+   - ✅ ワールドにSensorsシステム（`gz-sim-sensors-system`＋`<render_engine>ogre2</render_engine>`）を追加した（2026-09-30、未コミット）
+   - ✅ `pixi run gz topic -e -t /lidar2 -n 1`で値が出ることを確認（2026-09-30）。`angle_min/max`=±1.396263、`count`=640、`vertical_count`=1、`ranges`はすべて`inf`（障害物なし、床も写らない＝スキャン面が水平で正しい）
+     - **学び**: シミュレーションが一時停止中（GUIで起動した直後）はLiDARが何も出さない。`/stats`の`paused: true`で確認できる。▶を押すか、`gz sim -r`で起動する
+     - `intensities`は反射強度。`gpu_lidar`は材質の反射率を計算しないので全部0になる。方策では使わない。見るときは`| grep -E "ranges|count|angle_min|angle_max"`で絞る
+     - `ranges[0]`は`angle_min`（−80度、**右端**）で、番号が増えるほど左に回る。640本なら真正面は319〜320番あたり
+   - ⬜ **次はここから**: 障害物を置いて、距離が正しく出るか確かめる
+     1. お手本の`model_with_lidar`（x=4の静的な箱、78〜133行目）を消す
+     2. 車の正面（例: x=1.0, y=2）に静的な箱（例: 0.2×0.2×0.3、pose z=0.15）を置く。`<static>true</static>`、collisionとvisualは同じ寸法。**高さはスキャン面（約0.105m）より高くする**
+     3. `pixi run gz topic -e -t /lidar2 -n 1 | grep ranges | sed -n '315,325p'`で正面の値を見る。予想値（箱の手前の面までの距離＝1.0−0.2/2）と比べる
+   - ⬜ LiDARの仕様を決める（設計判断、S3の公開パラメータになる）: 角度範囲（今は160度。360度か前方だけか）、サンプル数（24の倍数）、`update_rate`（今10Hz）、トピック名（今`lidar2`。bridgeで`/scan`につなぐ前提）。ビーム0の向きの問題（下のSDF作りのメモ）とあわせて決める
 3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる（設定は`config/bridge.yaml`に置く案）
-4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）
+4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）。`gz sim -r`（再生状態で起動）を入れる
 
 ### SDF作りのメモ
 
