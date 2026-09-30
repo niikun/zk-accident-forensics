@@ -99,8 +99,9 @@
   GUIなしの計測で、前進0.300m/s・旋回0.500rad/sが指令どおりに出て、停止時のつんのめりもない（pitch 0度）。
   inertiaの最終修正（0.0001 / 0.00005）まで`1daf8f8`でコミット済み
 - **LiDARが値を出すようになった**（2026-09-30、`1daf8f8`でコミット済み）: ワールドにSensorsシステムを追加し、`/lidar2`から`ranges`が届くことを確認
-- **障害物を置いた**（2026-09-30、未コミット）: `model_with_lidar`を消し、x=1.0, y=2に静的な箱`box`（0.2×0.2×0.3）を置いた。車が箱にぶつかって止まる。
-  衝突した状態でLiDARの正面は`-inf`になった（6章の2）。**`policy_node`の`downsample()`が`-inf`を`range_max`（遠い）に変えてしまう穴が見つかった**（未修正）
+- **LiDARを360度（360本、`ranges[0]`＝正面）にした**（2026-09-30、未コミット）。正面0.90006mで予想どおり。スキャンの変換仕様（`-inf`→0、`+inf`→10、`NaN`→0、区間の最小値、`policy` crateに置く）を決めた。次はその実装（6章の2）
+- **障害物を置いた**（2026-09-30、`22bda7c`でコミット済み）: `model_with_lidar`を消し、x=1.0, y=2に静的な箱`box`（0.2×0.2×0.3）を置いた。車が箱にぶつかって止まる。
+  衝突した状態でLiDARの正面は`-inf`になった（6章の2）。**`policy_node`の`downsample()`が`-inf`を`range_max`（遠い）に変えてしまう穴が見つかった**（直し方は決定、未実装）
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -171,7 +172,7 @@ cargo build && cargo test -p policy
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
    2. ✅ 元のPC: pixiを導入し`pixi init` → `pixi add ros-lyrical-ros-base` → `pixi run cargo build`、`ros2 topic pub`での疎通をapt版と比較（4章のハマりどころを参照）
    3. ✅ `pixi add ros-lyrical-ros-gz`でGazeboのGUI表示を確認し（元のPC）、`pixi.toml`/`pixi.lock`/`.gitignore`（`.pixi/`）をコミット
-   4. **サブPC（次はここから）**:
+   4. サブPC（0-4-7の秘書ノート以外は完了）:
       1. 事前確認: `cc --version`（Rustのリンクに必要。無ければ`build-essential`）、ディスクの空き（`.pixi/`は数GBになる）
       2. `git pull`（未cloneなら`git clone git@github.com:niikun/zk-accident-forensics.git`）
       3. ✅ pixiを導入（pixi 0.81.0）→ `pixi install --locked`（lockは書き換わらず、`ROS_DISTRO=lyrical`、`share/sensor_msgs/rust`あり、2026-09-29）
@@ -214,7 +215,7 @@ cargo build && cargo test -p policy
      - **学び**: シミュレーションが一時停止中（GUIで起動した直後）はLiDARが何も出さない。`/stats`の`paused: true`で確認できる。▶を押すか、`gz sim -r`で起動する
      - `intensities`は反射強度。`gpu_lidar`は材質の反射率を計算しないので全部0になる。方策では使わない。見るときは`| grep -E "ranges|count|angle_min|angle_max"`で絞る
      - `ranges[0]`は`angle_min`（−80度、**右端**）で、番号が増えるほど左に回る。640本なら真正面は319〜320番あたり
-   - ✅ お手本の`model_with_lidar`を消し、車の正面（x=1.0, y=2）に静的な箱`box`（0.2×0.2×0.3、pose z=0.15、`<static>true</static>`、collisionとvisualは同じ寸法）を置いた（2026-09-30、未コミット）。`gz sdf -k`は`Valid.`
+   - ✅ お手本の`model_with_lidar`を消し、車の正面（x=1.0, y=2）に静的な箱`box`（0.2×0.2×0.3、pose z=0.15、`<static>true</static>`、collisionとvisualは同じ寸法）を置いた（2026-09-30、`22bda7c`）。`gz sdf -k`は`Valid.`
      - **学び**: `<visual>`/`<collision>`は`<model>`直下に書けず、`<link>`の中に置く（model → link → visual/collision）。無いと`A model must have at least one link`
      - **学び**: `<static>`も`<collision>`も無い箱は、▶を押すと重力で落ち、地面をすり抜けて消える。`Valid.`は書式が正しいだけで、物理的に正しいことは保証しない
      - `<static>`だけだと車が箱をすり抜ける。衝突させるには`<collision>`も要る
@@ -223,11 +224,26 @@ cargo build && cargo test -p policy
      - `ranges`の範囲外の値（REP 117と同じ）: `-inf`＝近すぎる（min未満）、`+inf`＝何もない（max以内に当たらない）、`NaN`＝計測失敗
      - **穴**: [policy_node.rs](crates/robot_nodes/src/bin/policy_node.rs)の`downsample()`は`is_finite()`でない値をすべて`range_max`にする。`-inf`（張り付くほど近い）が「10m先まで空いている」に化け、一番危ない瞬間に直進を選ぶ
      - 衝突の検知をLiDARのしきい値で行うなら、しきい値は`range.min`より大きくするか、`-inf`そのものを衝突とみなす（未決事項の判断材料）
-   - ⬜ **次はここから**:
-     1. 車をx=0に戻し、停止したまま`pixi run gz topic -e -t /lidar2 -n 1 | grep ranges | sed -n '315,325p'`で正面の値を見る。予想値は**0.9m**（箱の手前の面1.0−0.1、LiDARはx=0）
-     2. `downsample()`の`-inf`/`+inf`/`NaN`の扱いを直す（ユーザーが実装）。問い: それぞれ何mに置き換えるか。変換はノードに置くか、方策の入力の定義として`policy` crate（guestと共有）に置くか。`-inf`のテストを`policy`に1件足す
-     3. `worlds/forensics.sdf`をコミット
-   - ⬜ LiDARの仕様を決める（設計判断、S3の公開パラメータになる）: 角度範囲（今は160度。360度か前方だけか）、サンプル数（24の倍数）、`update_rate`（今10Hz）、トピック名（今`lidar2`。bridgeで`/scan`につなぐ前提）。ビーム0の向きの問題（下のSDF作りのメモ）とあわせて決める
+   - ✅ **LiDARを360度に変更し、並びを`expert()`の前提に合わせた**（2026-09-30、未コミット）: `samples`=360、`min_angle`=0、`max_angle`=6.2657（＝2π×359/360、359度）。
+     `ranges[0]`が正面で、番号が増えるほど左回り（REP 103と同じ）。1度刻みで始点と終点が重ならない。`downsample()`の`ranges[15*i]`は`beams[1]`＝左15度、`beams[23]`＝右15度になる
+     - 確認（`gz topic -e -t /lidar2 -n 1`）: `count` 360、`angle_step` 0.0174532（1度）、`angle_max` 6.2657。正面`ranges[0]`＝0.90006（予想0.9m）。
+       箱に当たるのは`[0]`〜`[6]`と`[354]`〜`[359]`の13本で左右対称。真横（90番・270番）は`inf`（スキャン面0.105mと車輪の上端0.10mの差5mmでも、自分の車輪は写らない）
+     - **学び**: `angle_min`の行が出ないのは値が0だから（protobufは既定値の項目を表示しない）
+     - **学び**: **SDFを直したらGazeboを起動し直す**。gzはSDFを起動時に1回しか読まない（再起動を忘れて、古い640本・±80度の出力を見ていた）
+     - **学び**: 角度の単位はラジアン。`max_angle`は`min_angle`より大きくする（最初は「0、−359」と度で考えていた）
+   - ✅ **スキャンを方策の入力に変える仕様を決めた**（2026-09-30）
+     - 置き換え: `-inf`（`range_min`より近い）→ **0**、`+inf`（`range_max`以内に何もない）→ **`range_max`（10）**、`NaN`（計測失敗）→ **0**（障害物とみなす安全側）
+       - `+inf`を100にしない理由: 意味は「10m以内に何もない」で10と同じ。実測は0〜10なので、100があるとMLPの入力の正規化と固定小数点の精度が崩れる
+     - **変換は`policy` crateに置く**（SP1 guestと共有）。blackboxは**生の360本をコミット**し、guestが同じ関数で24本を作る。
+       理由: 「実際に動かしたコードそのものを証明する」範囲に入力の作り方まで入り、S3を生データで判定できる。変換がROS側にあると、間引き方や`-inf`の扱いが証明の外に残る
+     - **間引きは区間の最小値**（15本ずつ24区間、各区間の最小値を1本にする）。15本に1本を取るだけだと、間の細い障害物（歩行者の脚）を見落とす
+   - ⬜ **次はここから**: 上の仕様を実装する（ユーザーが実装）
+     1. `policy`（`no_std`）に、生の`ranges`（`&[f32]`）と`range_max`を受け取り`[f32; NUM_BEAMS]`を返す関数を作る。`LaserScan`型には依存させない
+     2. 先にテストを書く: `-inf`→0、`+inf`→`range_max`、`NaN`→0、区間の中の1本だけ近い値があると、その値が区間の代表になる
+     3. `policy_node`の`downsample()`をその関数の呼び出しに置き換える
+     4. 考えること: 区間の区切り方（`ranges[0]`＝正面を区間の端にするか中央にするか。中央なら`[353]`〜`[7]`のように0番をまたぐ）、`ranges.len()`が360以外のときの扱い、`range_min`の扱い
+     5. `worlds/forensics.sdf`とあわせてコミット
+   - LiDARの残りの仕様: `update_rate`（今10Hz、方策の周期＝反応時間の下限）、トピック名（今`lidar2`。bridgeで`/scan`につなぐ）
 3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる（設定は`config/bridge.yaml`に置く案）
 4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）。`gz sim -r`（再生状態で起動）を入れる
 
@@ -238,7 +254,7 @@ cargo build && cargo test -p policy
   - `gz/gz-sim/worlds/visualize_lidar.sdf`: `gpu_lidar`の書き方と、ワールドに要るシステム（Physics、Sensors＋`ogre2`、SceneBroadcaster）
   - `ros_gz_sim_demos/config/diff_drive.yaml`、`gpu_lidar.yaml`: bridgeのYAMLの書き方
 - 構成: 最初はワールドとロボットを`worlds/forensics.sdf`の1ファイルに書く。育ったら`models/robot/model.sdf`に分けて`<include>`する
-- **ハマりどころ: ビーム0の向き**。`policy::expert()`（`crates/policy/src/lib.rs:16`）は`beams[0]`が真正面、`beams[1]`と`beams[23]`がその両隣という前提。
+- **ハマりどころ: ビーム0の向き**（2026-09-30に解決: 360本・`min_angle`=0で`ranges[0]`＝正面にした）。`policy::expert()`（`crates/policy/src/lib.rs:16`）は`beams[0]`が真正面、`beams[1]`と`beams[23]`がその両隣という前提。
   gzのlidarを`min_angle=-π, max_angle=π`にすると`ranges[0]`は真後ろを向く。SDFの角度範囲で合わせるか、`downsample()`で回転させるかはユーザーが決める
   （方策の入力の定義になり、SP1 guestと共有する）。`samples`は24の倍数にし、360度で始点と終点が重複しないようにする
 - **SDFの数値はS3の公開パラメータになる**ので、決めたら表にして残す
