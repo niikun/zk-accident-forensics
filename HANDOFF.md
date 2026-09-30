@@ -97,8 +97,10 @@
 - **SDFの自作を開始**（2026-09-29、サブPC）: `worlds/forensics.sdf`（お手本のコピー、`vehicle_green`はコメントアウト、構文チェック済み、`c8cb379`でコミット済み）。青い車が`cmd_vel`で進むことを確認。LiDARは低い位置に付け、そのために車体を小さく作り直す方針に決定（6章の2）
 - **小型の車体が完成**（2026-09-30、サブPC）: `vehicle_blue`を小型に作り直し、`lidar_link`＋`gpu_lidar`を載せた（設計値は6章の2の表）。`gz sdf -k`は`Valid.`。
   GUIなしの計測で、前進0.300m/s・旋回0.500rad/sが指令どおりに出て、停止時のつんのめりもない（pitch 0度）。
-  `7060743`までコミット済み。車輪とキャスターのinertiaの最終修正（0.0001 / 0.00005）は**未コミット**
-- **LiDARが値を出すようになった**（2026-09-30、未コミット）: ワールドにSensorsシステムを追加し、`/lidar2`から`ranges`が届くことを確認（障害物がないので全部`inf`）。次は障害物を置いて距離を確かめる（6章の2）
+  inertiaの最終修正（0.0001 / 0.00005）まで`1daf8f8`でコミット済み
+- **LiDARが値を出すようになった**（2026-09-30、`1daf8f8`でコミット済み）: ワールドにSensorsシステムを追加し、`/lidar2`から`ranges`が届くことを確認
+- **障害物を置いた**（2026-09-30、未コミット）: `model_with_lidar`を消し、x=1.0, y=2に静的な箱`box`（0.2×0.2×0.3）を置いた。車が箱にぶつかって止まる。
+  衝突した状態でLiDARの正面は`-inf`になった（6章の2）。**`policy_node`の`downsample()`が`-inf`を`range_max`（遠い）に変えてしまう穴が見つかった**（未修正）
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -207,15 +209,24 @@ cargo build && cargo test -p policy
        - 起動中のGUIと別にテストするときは`GZ_PARTITION=<名前>`で通信を分ける（分けないと指令がGUIの車にも届く）
        - `gz topic -p`の最初の1回は接続前に送られて落ちることがある。数回送る
        - `gz`はpixi環境にしかない。`pixi run gz sdf -k worlds/forensics.sdf`のように実行する
-   - ✅ ワールドにSensorsシステム（`gz-sim-sensors-system`＋`<render_engine>ogre2</render_engine>`）を追加した（2026-09-30、未コミット）
+   - ✅ ワールドにSensorsシステム（`gz-sim-sensors-system`＋`<render_engine>ogre2</render_engine>`）を追加した（2026-09-30、`1daf8f8`）
    - ✅ `pixi run gz topic -e -t /lidar2 -n 1`で値が出ることを確認（2026-09-30）。`angle_min/max`=±1.396263、`count`=640、`vertical_count`=1、`ranges`はすべて`inf`（障害物なし、床も写らない＝スキャン面が水平で正しい）
      - **学び**: シミュレーションが一時停止中（GUIで起動した直後）はLiDARが何も出さない。`/stats`の`paused: true`で確認できる。▶を押すか、`gz sim -r`で起動する
      - `intensities`は反射強度。`gpu_lidar`は材質の反射率を計算しないので全部0になる。方策では使わない。見るときは`| grep -E "ranges|count|angle_min|angle_max"`で絞る
      - `ranges[0]`は`angle_min`（−80度、**右端**）で、番号が増えるほど左に回る。640本なら真正面は319〜320番あたり
-   - ⬜ **次はここから**: 障害物を置いて、距離が正しく出るか確かめる
-     1. お手本の`model_with_lidar`（x=4の静的な箱、78〜133行目）を消す
-     2. 車の正面（例: x=1.0, y=2）に静的な箱（例: 0.2×0.2×0.3、pose z=0.15）を置く。`<static>true</static>`、collisionとvisualは同じ寸法。**高さはスキャン面（約0.105m）より高くする**
-     3. `pixi run gz topic -e -t /lidar2 -n 1 | grep ranges | sed -n '315,325p'`で正面の値を見る。予想値（箱の手前の面までの距離＝1.0−0.2/2）と比べる
+   - ✅ お手本の`model_with_lidar`を消し、車の正面（x=1.0, y=2）に静的な箱`box`（0.2×0.2×0.3、pose z=0.15、`<static>true</static>`、collisionとvisualは同じ寸法）を置いた（2026-09-30、未コミット）。`gz sdf -k`は`Valid.`
+     - **学び**: `<visual>`/`<collision>`は`<model>`直下に書けず、`<link>`の中に置く（model → link → visual/collision）。無いと`A model must have at least one link`
+     - **学び**: `<static>`も`<collision>`も無い箱は、▶を押すと重力で落ち、地面をすり抜けて消える。`Valid.`は書式が正しいだけで、物理的に正しいことは保証しない
+     - `<static>`だけだと車が箱をすり抜ける。衝突させるには`<collision>`も要る
+   - ✅ 車が箱にぶつかって止まることを確認（2026-09-30）
+   - ✅ **衝突した状態で正面のビームは`-inf`**（2026-09-30）。LiDAR（車体中心）から箱の面まで約0.07m（chassisの前端＝中心から0.07m）で、`<range><min>`の0.08m未満のため
+     - `ranges`の範囲外の値（REP 117と同じ）: `-inf`＝近すぎる（min未満）、`+inf`＝何もない（max以内に当たらない）、`NaN`＝計測失敗
+     - **穴**: [policy_node.rs](crates/robot_nodes/src/bin/policy_node.rs)の`downsample()`は`is_finite()`でない値をすべて`range_max`にする。`-inf`（張り付くほど近い）が「10m先まで空いている」に化け、一番危ない瞬間に直進を選ぶ
+     - 衝突の検知をLiDARのしきい値で行うなら、しきい値は`range.min`より大きくするか、`-inf`そのものを衝突とみなす（未決事項の判断材料）
+   - ⬜ **次はここから**:
+     1. 車をx=0に戻し、停止したまま`pixi run gz topic -e -t /lidar2 -n 1 | grep ranges | sed -n '315,325p'`で正面の値を見る。予想値は**0.9m**（箱の手前の面1.0−0.1、LiDARはx=0）
+     2. `downsample()`の`-inf`/`+inf`/`NaN`の扱いを直す（ユーザーが実装）。問い: それぞれ何mに置き換えるか。変換はノードに置くか、方策の入力の定義として`policy` crate（guestと共有）に置くか。`-inf`のテストを`policy`に1件足す
+     3. `worlds/forensics.sdf`をコミット
    - ⬜ LiDARの仕様を決める（設計判断、S3の公開パラメータになる）: 角度範囲（今は160度。360度か前方だけか）、サンプル数（24の倍数）、`update_rate`（今10Hz）、トピック名（今`lidar2`。bridgeで`/scan`につなぐ前提）。ビーム0の向きの問題（下のSDF作りのメモ）とあわせて決める
 3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる（設定は`config/bridge.yaml`に置く案）
 4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）。`gz sim -r`（再生状態で起動）を入れる

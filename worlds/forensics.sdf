@@ -80,61 +80,31 @@
         </visual>
       </link>
     </model>
-    <model name="model_with_lidar">
-      <pose>4 0 0.5 0 0.0 3.14</pose>
-      <link name="link">
-        <pose>0.05 0.05 0.05 0 0 0</pose>
-        <inertial>
-          <mass>0.1</mass>
-          <inertia>
-            <ixx>0.000166667</ixx>
-            <iyy>0.000166667</iyy>
-            <izz>0.000166667</izz>
-          </inertia>
-        </inertial>
-        <collision name="collision">
+
+    <model name='box'>
+    <static>true</static>
+      <pose>1 2 0.15 0 0 0</pose>
+      <link name='ob'>
+       <visual name='visual'>
           <geometry>
             <box>
-              <size>0.1 0.1 0.1</size>
+              <size>0.2 0.2 0.3</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.5 0.5 1.0 1</ambient>
+            <diffuse>0.5 0.5 1.0 1</diffuse>
+            <specular>0.0 0.0 1.0 1</specular>
+          </material>
+        </visual>
+        <collision name='collision'>
+          <geometry>
+            <box>
+              <size>0.2 0.2 0.3</size>
             </box>
           </geometry>
         </collision>
-        <visual name="visual">
-          <geometry>
-            <box>
-              <size>0.1 0.1 0.1</size>
-            </box>
-          </geometry>
-        </visual>
-
-        <sensor name='gpu_lidar' type='gpu_lidar'>
-          <topic>lidar</topic>
-          <update_rate>10</update_rate>
-          <lidar>
-            <scan>
-              <horizontal>
-                <samples>640</samples>
-                <resolution>1</resolution>
-                <min_angle>-1.396263</min_angle>
-                <max_angle>1.396263</max_angle>
-              </horizontal>
-              <vertical>
-                <samples>16</samples>
-                <resolution>1</resolution>
-                <min_angle>-0.261799</min_angle>
-                <max_angle>0.261799</max_angle>
-              </vertical>
-            </scan>
-            <range>
-              <min>0.08</min>
-              <max>10.0</max>
-              <resolution>0.01</resolution>
-            </range>
-          </lidar>
-          <visualize>true</visualize>
-        </sensor>
       </link>
-      <static>true</static>
     </model>
 
     <model name='vehicle_blue'>
