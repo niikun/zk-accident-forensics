@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-09-30
+最終更新: 2026-10-02
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -83,12 +83,12 @@
 
 **TODO**: 先行研究との差分を1枚の表にして、レポートの工夫点の核にする（W4〜W5）
 
-## 3. 現在の状態（2026-09-30）
+## 3. 現在の状態（2026-10-02）
 
 - 初回コミット済み: `crates/policy`（no_std、仮のルールベース`expert()`）と`crates/robot_nodes`（`policy_node`）
 - `policy_node`: `/scan`を24本に間引いて方策に渡し、`/cmd_vel`（`geometry_msgs/Twist`）に出す
 - 疎通確認済み: `ros2 topic pub`で前方0.3mの偽スキャンを流すと`angular.z=0.8`（停止・旋回）が返る
-- `cargo test -p policy`はテスト1件（`turns_when_blocked`）
+- `cargo test -p policy`はテスト3件（`turns_when_blocked`、`test_inf_case`、`test_preprocess_beams`）。すべて通過（2026-10-02）
 - **元のPCでpixi版の疎通を確認済み**（2026-09-28）: `rust-toolchain.toml`（1.97.0＋rustfmt/clippy）、`pixi.toml`（robostack-lyrical＋conda-forge、`ros-lyrical-ros-base`）で
   `pixi run cargo build` → `policy_node`が動き、偽スキャン（`ranges: [0.3, 3.0, 3.0, 3.0]`）で`angular.z=0.8`が返る
 - **元のPCでpixi版Gazeboの表示を確認済み**（2026-09-29）: `ros-lyrical-ros-gz`を追加し、`pixi run gz sim shapes.sdf`がWSLgで起動。RTFは約70%
@@ -99,7 +99,9 @@
   GUIなしの計測で、前進0.300m/s・旋回0.500rad/sが指令どおりに出て、停止時のつんのめりもない（pitch 0度）。
   inertiaの最終修正（0.0001 / 0.00005）まで`1daf8f8`でコミット済み
 - **LiDARが値を出すようになった**（2026-09-30、`1daf8f8`でコミット済み）: ワールドにSensorsシステムを追加し、`/lidar2`から`ranges`が届くことを確認
-- **LiDARを360度（360本、`ranges[0]`＝正面）にした**（2026-09-30、未コミット）。正面0.90006mで予想どおり。スキャンの変換仕様（`-inf`→0、`+inf`→10、`NaN`→0、区間の最小値、`policy` crateに置く）を決めた。次はその実装（6章の2）
+- **LiDARを360度（360本、`ranges[0]`＝正面）にした**（2026-09-30、`bf3b354`でコミット済み）。正面0.90006mで予想どおり。スキャンの変換仕様（`-inf`→0、`+inf`→`range_max`、`NaN`→0、区間の最小値、`policy` crateに置く）を決めた
+- **スキャンの変換を`policy::preprocess_beams()`として実装した**（2026-10-02、`557c078`でコミット済み）。生の360本を24本にする。正面は`beams[0]`の区間の中央（`ranges[353..360]`＋`ranges[0..8]`）。
+  `expert()`からは置き換え処理を外した。**`policy_node`はまだ古い`downsample()`を使っている**ので、`-inf`の穴は走行中は残っている（6章の2）
 - **障害物を置いた**（2026-09-30、`22bda7c`でコミット済み）: `model_with_lidar`を消し、x=1.0, y=2に静的な箱`box`（0.2×0.2×0.3）を置いた。車が箱にぶつかって止まる。
   衝突した状態でLiDARの正面は`-inf`になった（6章の2）。**`policy_node`の`downsample()`が`-inf`を`range_max`（遠い）に変えてしまう穴が見つかった**（直し方は決定、未実装）
 - 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
@@ -237,12 +239,21 @@ cargo build && cargo test -p policy
      - **変換は`policy` crateに置く**（SP1 guestと共有）。blackboxは**生の360本をコミット**し、guestが同じ関数で24本を作る。
        理由: 「実際に動かしたコードそのものを証明する」範囲に入力の作り方まで入り、S3を生データで判定できる。変換がROS側にあると、間引き方や`-inf`の扱いが証明の外に残る
      - **間引きは区間の最小値**（15本ずつ24区間、各区間の最小値を1本にする）。15本に1本を取るだけだと、間の細い障害物（歩行者の脚）を見落とす
-   - ⬜ **次はここから**: 上の仕様を実装する（ユーザーが実装）
-     1. `policy`（`no_std`）に、生の`ranges`（`&[f32]`）と`range_max`を受け取り`[f32; NUM_BEAMS]`を返す関数を作る。`LaserScan`型には依存させない
-     2. 先にテストを書く: `-inf`→0、`+inf`→`range_max`、`NaN`→0、区間の中の1本だけ近い値があると、その値が区間の代表になる
-     3. `policy_node`の`downsample()`をその関数の呼び出しに置き換える
-     4. 考えること: 区間の区切り方（`ranges[0]`＝正面を区間の端にするか中央にするか。中央なら`[353]`〜`[7]`のように0番をまたぐ）、`ranges.len()`が360以外のときの扱い、`range_min`の扱い
-     5. `worlds/forensics.sdf`とあわせてコミット
+   - ✅ **上の仕様を`policy::preprocess_beams(beams_raw: &[f32], range_max: f32) -> Result<[f32; NUM_BEAMS], &'static str>`として実装した**（2026-10-02、`e75ea88`・`557c078`）
+     - 区切り方は**正面を区間の中央**にした。`shaped[i] = raw[(i + 353) % 360]`と回してから15本ずつ区切る。`beams[0]`＝`raw[353..360]`＋`raw[0..8]`（右7度〜左7度）
+     - 長さが360でなければ`Err`を返す（guestでpanicさせないため。panicすると証明そのものが作れない）
+     - 最小値は置き換えのあとに`<`で自分で比べる（`f32::min`は`NaN`を無視するので、置き換え前に使うと`NaN`が消える）
+     - `expert()`は置き換えをしない。きれいな24本を受け取る前提（W2でMLPに置き換わっても、入力は同じ関数を通る）
+     - **学び**: `for x: T in ...`のようにforのパターンに型注釈は書けない。`&[f32]`から切り出したスライスは`iter_mut()`できない。値を作るなら`let v = if ... { } else { };`の形にする
+     - **学び**: 回転の`%`の右側は一周の長さ（360）のまま。ずらす量は左側で決める。`usize`で`i - 7`はアンダーフローするので、`i + 360 - 7`と足し算で書く
+     - **学び**: テストの背景値は、確かめたいことが結果に表れる値にする（背景0.0だと、どの区間も最小値が0になり、置いた値が見えない）
+   - ⬜ **次はここから**（ユーザーが実装）
+     1. 区間の境目のテストを足す: `raw[352]`→`beams[23]`、`raw[353]`・`raw[0]`・`raw[7]`→`beams[0]`、`raw[8]`→`beams[1]`（背景を遠い値にして1本ずつ置く）
+     2. 片付け: `NUM_RANGES`→`RANGES_PER_BEAM`など意味の通る名前に、`353`を定数から計算する、24行目の`&mut`と`iter_mut()`を`&`と`iter()`に、`preprocess_beams`に`///`コメント（入力の並びと置き換え規則）、
+        `turns_when_blocked`は`expert()`だけを試す形（24本を直接渡す）に戻す
+     3. `policy_node`の`downsample()`を`preprocess_beams(&scan.ranges, scan.range_max)`の呼び出しに置き換える。`Err`のときの振る舞い（停止指令を出す、など）を決める
+     4. `pixi run cargo build`を通し、疎通を確認する。3章の偽スキャンは4本なので、360本の入力を作る必要がある
+     5. コミット
    - LiDARの残りの仕様: `update_rate`（今10Hz、方策の周期＝反応時間の下限）、トピック名（今`lidar2`。bridgeで`/scan`につなぐ）
 3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる（設定は`config/bridge.yaml`に置く案）
 4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）。`gz sim -r`（再生状態で起動）を入れる
