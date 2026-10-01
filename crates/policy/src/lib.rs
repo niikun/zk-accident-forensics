@@ -11,7 +11,7 @@ pub struct Action {
     pub linear: f32,
     pub angular: f32,
 }
-pub fn preprocess_beams(beams_raw : &mut [f32], range_max: f32) -> Result<[f32; NUM_BEAMS], &'static str> {
+pub fn preprocess_beams(beams_raw : &[f32], range_max: f32) -> Result<[f32; NUM_BEAMS], &'static str> {
     if beams_raw.len() != NUM_BEAMS * NUM_RANGES {
         return Err("beams_raw length is not NUM_BEAMS * NUM_RANGES");
     }
@@ -44,11 +44,8 @@ pub fn preprocess_beams(beams_raw : &mut [f32], range_max: f32) -> Result<[f32; 
 
 /// 仮のルールベース方策（エキスパート）。前方が近ければ旋回、空いていれば直進。
 pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
-    let mut front_beams = [beams[0],beams[1],beams[NUM_BEAMS-1]];
-    for b in front_beams.iter_mut() {
-        
-    }
-    let mut front = front_beams[0].min(front_beams[1]).min(front_beams[2]);
+    let front_beams = [beams[0],beams[1],beams[NUM_BEAMS-1]];
+    let front = front_beams[0].min(front_beams[1]).min(front_beams[2]);
     
     if front < 0.5 {
         Action { linear: 0.0, angular: 0.8 }
@@ -66,19 +63,19 @@ mod tests {
     fn turns_when_blocked() {
         let mut b = [3.0; NUM_BEAMS*NUM_RANGES];
         b[0] = 0.3;
-        let mut b2 = preprocess_beams(&mut b,10.0).unwrap();
+        let b2 = preprocess_beams(&b,10.0).unwrap();
         assert_eq!(expert(&b2).linear, 0.0);
         assert_eq!(expert(&b2).angular, 0.8);
     }
 
     #[test]
     fn test_inf_case() {
-        let b = preprocess_beams(&mut [f32::INFINITY; NUM_BEAMS*NUM_RANGES],10.0).unwrap();
-        let neg_b = preprocess_beams(&mut [f32::NEG_INFINITY; NUM_BEAMS*NUM_RANGES],10.0).unwrap();
-        let nan_b = preprocess_beams(&mut [f32::NAN; NUM_BEAMS*NUM_RANGES],10.0).unwrap();
+        let b = preprocess_beams(&[f32::INFINITY; NUM_BEAMS*NUM_RANGES],10.0).unwrap();
+        let neg_b = preprocess_beams(&[f32::NEG_INFINITY; NUM_BEAMS*NUM_RANGES],10.0).unwrap();
+        let nan_b = preprocess_beams(&[f32::NAN; NUM_BEAMS*NUM_RANGES],10.0).unwrap();
         let mut mixed = [3.0_f32; NUM_BEAMS*NUM_RANGES];
         mixed[0] = f32::NAN;   // 正面だけ計測失敗
-        let b_mix = preprocess_beams(&mut mixed,10.0).unwrap();
+        let b_mix = preprocess_beams(&mixed,10.0).unwrap();
         assert_eq!(expert(&b).linear, 0.2);
         assert_eq!(expert(&b).angular, 0.0);
         assert_eq!(expert(&neg_b).linear, 0.0);
@@ -96,7 +93,7 @@ mod tests {
         beams_raw[10] = f32::INFINITY;
         beams_raw[25] = f32::NEG_INFINITY;
         beams_raw[40] = f32::NAN;
-        let beams = preprocess_beams(&mut beams_raw, 10.0).unwrap();
+        let beams = preprocess_beams(&beams_raw, 10.0).unwrap();
         assert_eq!(beams[0],0.5);
         assert_eq!(beams[1],10.0);
         assert_eq!(beams[2],0.0);
