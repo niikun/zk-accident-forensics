@@ -99,4 +99,48 @@ mod tests {
         assert_eq!(beams[2],0.0);
         assert_eq!(beams[3],0.0);    
     }
+
+    #[test]
+    fn test_preprocess_beams_boundary() {
+        let mut beams_raw = [f32::INFINITY; NUM_BEAMS * NUM_RANGES];
+        let mut beams_raw1 = beams_raw.clone();
+        beams_raw1[352] = 0.5;
+        let mut beams_raw2 = beams_raw.clone();
+        beams_raw2[353] = 0.5;
+        let mut beams_raw3 = beams_raw.clone();
+        beams_raw3[359] = 0.5;
+        let mut beams_raw4 = beams_raw.clone();
+        beams_raw4[0] = 0.5;
+        let mut beams_raw5 = beams_raw.clone();
+        beams_raw5[7] = 0.5;
+        let mut beams_raw6 = beams_raw.clone();
+        beams_raw6[8] = 0.5;
+
+        let beams1 = preprocess_beams(&beams_raw1, 10.0).unwrap();
+        let beams2 = preprocess_beams(&beams_raw2, 10.0).unwrap();
+        let beams3 = preprocess_beams(&beams_raw3, 10.0).unwrap();
+        let beams4 = preprocess_beams(&beams_raw4, 10.0).unwrap();
+        let beams5 = preprocess_beams(&beams_raw5, 10.0).unwrap();
+        let beams6 = preprocess_beams(&beams_raw6,10.0).unwrap();
+        assert_eq!(beams1[23],0.5);
+        assert_eq!(beams1[0], 10.0);
+        assert_eq!(beams1[1], 10.0);
+        assert_eq!(beams2[23],10.0);
+        assert_eq!(beams2[0], 0.5);
+        assert_eq!(beams2[1], 10.0);
+        assert_eq!(beams3[23],10.0);
+        assert_eq!(beams3[0], 0.5);
+        assert_eq!(beams3[1], 10.0);
+        assert_eq!(beams4[23],10.0);
+        assert_eq!(beams4[0], 0.5);
+        assert_eq!(beams4[1], 10.0);
+        assert_eq!(beams5[23],10.0);
+        assert_eq!(beams5[0], 0.5);
+        assert_eq!(beams5[1], 10.0);
+        assert_eq!(beams6[23],10.0);
+        assert_eq!(beams6[0], 10.0);
+        assert_eq!(beams6[1], 0.5);
+        }
+
+
 }
