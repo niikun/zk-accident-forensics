@@ -1,6 +1,6 @@
 //! /scan を購読し、方策の出力を /cmd_vel に出す。
 use anyhow::Result;
-use policy::NUM_BEAMS;
+use policy::{NUM_BEAMS, preprocess_beams, expert};
 use rclrs::*;
 use ros_env::*;
 
@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     let _scan_sub = node.create_subscription::<sensor_msgs::msg::LaserScan, _>(
         "scan",
         move |scan: sensor_msgs::msg::LaserScan| {
-            let a = policy::expert(&downsample(&scan));
+            let a = expert(&preprocess_beams(&scan.ranges.as_slice(), 30.0).unwrap());
             let mut twist = geometry_msgs::msg::Twist::default();
             twist.linear.x = a.linear as f64;
             twist.angular.z = a.angular as f64;
