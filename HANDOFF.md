@@ -108,13 +108,15 @@
   `range_max`は引数をやめ、`policy::RANGE_MAX`（`pub const`、10.0＝SDFの`<max>`）に固定した（方策の入力の定義なので、ノードとguestで食い違わないようにするため）
 - **障害物を置いた**（2026-09-30、`22bda7c`でコミット済み）: `model_with_lidar`を消し、x=1.0, y=2に静的な箱`box`（0.2×0.2×0.3）を置いた。車が箱にぶつかって止まる。
   衝突した状態でLiDARの正面は`-inf`になった（6章の2）。`policy_node`の`downsample()`が`-inf`を`range_max`（遠い）に変えてしまう穴が見つかった（2026-10-03に`preprocess_beams()`への切り替えで解消）
-- **閉ループ走行を達成**（2026-10-03、未コミット）: Gazebo → `ros_gz_bridge`（`config/bridge.yaml`）→ `policy_node` → Gazebo。車は箱に向かって直進し、手前で旋回する。
+- **閉ループ走行を達成**（2026-10-03、`0081853`）: Gazebo → `ros_gz_bridge`（`config/bridge.yaml`）→ `policy_node` → Gazebo。車は箱に向かって直進し、手前で旋回する。
   途中で「旋回し続ける」不具合が出て、原因は**重心が車軸のほぼ真上（3mm後ろ）で、前に倒れていた**こと。前にもキャスターを付けて直した（6章の2）。
   起動手順（ターミナル3〜4つ、プロジェクト直下、この順で。`pixi.toml`の`[tasks]`、2026-10-03）:
   1. `pixi run sim`（GUIなしは`pixi run sim-headless`＝`gz sim -rs`）
   2. `pixi run bridge`
   3. `pixi run policy`（`depends-on = ["build"]`で先にビルドする。**`build`は`policy_node`を含むcrateをビルドすること**。`-p policy`だとライブラリだけで、古いバイナリが動く）
   4. （観察）`pixi run ros2 topic echo /cmd_vel`、`pixi run ros2 topic info /cmd_vel`（Publisher/Subscriptionが各1）
+- **ワールドを「8の字」の部屋にした**（2026-10-03、未コミット。箱は削除）。詳細は6章の5
+- **`expert()`を「空いているほうに曲がる（greedy）＋滑らかな減速」に作り直す方針**（2026-10-03決定、未着手）。設計の論点は6章の5
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -181,7 +183,7 @@ cargo build && cargo test -p policy
 | W4 10/19–25 | S3（事故の主張）、シナリオB/C、検証結果の可視化（✅/❌） |
 | W5 10/26–11/1 | 動画・レポート・README仕上げ、提出 |
 
-## 6. 次にやること（W1の残り）
+## 6. 次にやること（W1は完了、W2の準備中）
 
 0. 環境をpixiに統一する（4章。ユーザーが実施）
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
@@ -274,7 +276,7 @@ cargo build && cargo test -p policy
         `preprocess_beams`に`///`コメント、`turns_when_blocked`は24本を直接`expert()`に渡す形に戻した。残りは`RANGE_MAX`への`///`（単位m、SDFの`<max>`と揃える）だけ
      3. ノードで`scan.range_max`と`policy::RANGE_MAX`が食い違うときの扱いを決める（警告か`Err`扱いか。SDFだけ変えて定数を直し忘れる事故を防ぐ）
      4. （任意）`dummy.py`で0.3を置く位置を変え、`i=8`（`beams[1]`→旋回）をノード経由で確かめる。✅ `i=30`（`beams[2]`→直進）は確認済み（2026-10-03）
-   - ✅ **閉ループで「ずっと旋回する」不具合を直した**（2026-10-03、未コミット）
+   - ✅ **閉ループで「ずっと旋回する」不具合を直した**（2026-10-03、`0081853`）
      - 症状: 直進して箱の手前で止まったあと、回り続ける。スキャンは正面0.211mで、左右対称に`0.211/cos(角度)`、±90度より後ろは`inf`＝**前に約28〜30度傾き、LiDARが床を写していた**（後ろのキャスターが浮いていた）。
        床の線は車と一緒に回るので、`expert()`は永遠に「前方0.5m未満」と判断する
      - 根本原因: 小型化で車輪をx=0（車体中央）に移し、キャスターは後ろ（x=−0.07）だけ。重心はx≈−0.003で**車軸のほぼ真上**。キャスターに約4%しか荷重がなく、止まる・回り始める力で前に倒れる
@@ -286,10 +288,36 @@ cargo build && cargo test -p policy
      - **学び**: 1つのmodelの中で、jointの名前も一意にする（重複すると`gz sdf -k`が`joint with name[...] already exists`）
      - **学び**: bridgeのYAMLは、両側で同じ名前なら`topic_name`、違うなら`ros_topic_name`＋`gz_topic_name`。`*_type_name`には型を書く（名前と取り違えやすい）
    - LiDARの残りの仕様: `update_rate`（今10Hz、方策の周期＝反応時間の下限）、トピック名（今`lidar2`。bridgeで`/scan`につなぐ）
-3. ✅ `ros_gz_bridge`で`/scan`（← gz `/lidar2`）と`/cmd_vel`（→ gz `/model/vehicle_blue/cmd_vel`）をブリッジし、`policy_node`で走らせた（2026-10-03、`config/bridge.yaml`、未コミット）。
+3. ✅ `ros_gz_bridge`で`/scan`（← gz `/lidar2`）と`/cmd_vel`（→ gz `/model/vehicle_blue/cmd_vel`）をブリッジし、`policy_node`で走らせた（2026-10-03、`config/bridge.yaml`、`0081853`）。
    名前はbridgeのYAMLで合わせる（SDFとノードはそのまま。実機ではbridgeを外すだけ）。LiDARは`lazy: true`、cmd_velは`lazy: false`
-   - 未確認: 旋回して箱が前方から外れたあと直進に戻るか、そのまま走り続けた先の振る舞い（ワールドに壁はない）
-4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）。`gz sim -r`（再生状態で起動）を入れる
+   - `0081853`には`config/diff.yaml`も入っている（中身と要否は未確認。お手本のコピーなら消してよい）
+4. ✅ 起動手順を`pixi.toml`の`[tasks]`にまとめた（2026-10-03、`5590285`）: `build`（`cargo build`）、`sim`（`gz sim -r`）、`sim-headless`（`gz sim -rs`）、`bridge`、`policy`（`depends-on = ["build"]`）
+   - **学び**: taskの中に`pixi run`は書かない（taskは最初からpixi環境の中で実行される）
+   - **学び**: `depends-on`は前のtaskの終了を待つ。終わらないプロセス（gz、bridge、ノード）どうしはつなげない。まとめて起動するならROS 2のlaunchファイル（`policy_node`はcolconのパッケージでないので、実行ファイルのパスを直接指定する書き方を調べる）
+   - **学び**: `cargo build -p policy`はライブラリだけをビルドし、`policy_node`は作り直されない
+5. **（作業中）W2の準備: ワールドとエキスパートとデモの記録**（2026-10-03に方針を決定）
+   - ✅ **ワールド**（未コミット）: 外周4m×4m（内側x −1.9〜1.9、y 0.1〜3.9、壁は厚さ0.2・高さ1.0）。内側の仕切り（厚さ0.1・高さ0.5）:
+     wall_1（x=1、y 1〜3）、wall_2（x=−1、y 1〜3）、wall_3（x=0、y 3〜4、上の壁につながる）、wall_4（x=0、y 0〜1、下の壁につながる）。
+     **左右2つのループが中央（x=0、y 1〜3）でつながる「8の字」**。車は(0, 2)、+x向きで開始。前方のwall_1まで0.9m
+     - ねらい: 両回りのループで左右どちらにも曲がるデモが集まる。中央の交差点は左右の判断の場所。wall_3/wall_4の陰はシナリオBの死角（飛び出し）の候補
+     - **学び**: **`gpu_lidar`はvisualを描画して測り、物理はcollisionで計算する**。visualとcollisionの寸法が違うと「見えるのに当たらない／当たるのに見えない」場所ができ、S3の判定が成り立たない。必ず同じ寸法にする
+     - **学び**: 隙間は車幅（車輪の球まで含めて0.28m）と比べる。0.4mの隙間は通れても、前方の判定（±22度）が両側の壁を拾って入れない
+     - 未確認: 新しいワールドで今の`expert()`（左にしか曲がらない）を走らせた様子（片方のループを回り続けるはず）
+   - ⬜ **`expert()`の作り直し（次はここから、ユーザーが実装）**: 一番空いている方向へ向かう（greedy）＋前方の近さに応じた滑らかな減速
+     - 基本形: 区間の中からargmaxを選び、その角度に比例した`angular`（左が正）。区間`i`の角度は、0〜12なら左に`i×15度`、13〜23なら右に`(24−i)×15度`。`linear`は前方の距離に応じて連続に変える（近ければ0でその場旋回）
+     - 決めること:
+       1. 候補の範囲: 全周だとUターンを選び続ける。前半分（`beams[0..=6]`と`beams[18..24]`）に絞る案。前半分がすべて塞がっているときの振る舞い
+       2. 方向のぱたぱた: argmaxはほぼ同じ距離の2方向で左右が入れ替わる（8の字の交差点）。チャタリングになり、出力が不連続でMLPが真似しにくい。
+          対策の候補は、同点のときの規則を固定する、距離で重み付けした平均（soft-argmax）、ヒステリシス（ただし`expert()`が状態を持つ）
+       3. 一番遠い光線が通れる方向とは限らない。`preprocess_beams`の区間の最小値が細い隙間を隠すはず（近づいたときの見え方を確かめる）
+       4. 上限: `angular`は比例させてから上限で切る（今の0.8が目安）。減速はSDFの`min_linear_acceleration`（−1m/s²）を超えない。止まる距離は停止距離（約0.04m）と`range_min`（0.15m）を踏まえて決め、名前付きの定数にする（S3の公開パラメータ）
+     - 進め方: **テストを先に書く**（左前方だけ空き→`angular > 0`、右前方だけ→`< 0`、正面が空き→`angular ≒ 0`かつ`linear`最大、正面が近い→`linear == 0`、左右同じ→決めた規則どおり）
+   - ⬜ **デモの記録**（決定: 24本のbeamsと`Action`をrosbagに記録する。pixi環境に`rosbag2`と`rosbag2_storage_mcap`、`std_msgs`のRustバインディングあり）
+     - beamsとactionは同じ時刻の組にする。`policy_node`から1つのメッセージ（`std_msgs/msg/Float32MultiArray`に24＋2）で出せば、独自のメッセージ型が要らず、時刻のずれもない
+     - 代案: 生の`/scan`と`/cmd_vel`を記録し、24本は後で`preprocess_beams`で作る（前処理を変えても集め直さずに済む）。どちらにするかは未決
+     - 読み出し: Burn（Rust）なら`mcap` crate＋CDRのデコード、またはPythonの`rosbags`でCSV/npyに変換。未決
+     - 記録用トピックは生の観測を流すので、学習時だけ使い、本番の走行では出さない（コンセプトとの整合）
+   - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討
 
 ### SDF作りのメモ
 
