@@ -2,11 +2,15 @@
 #![no_std]
 
 /// 方策に入力するLiDARビーム数（/scanをダウンサンプルした値）
+/// 
+use core::f32::consts::PI;
 pub const NUM_BEAMS: usize = 24;
 const NUM_RANGES_RAW:usize = 360;
 const RANGES_PER_BEAM: usize = NUM_RANGES_RAW / NUM_BEAMS;
 pub const RANGE_MAX: f32 = 10.0;
-
+const VMAX:f32 = 0.2;
+const D_SLOW:f32 = 0.5;
+const D_STOP:f32 = 0.25;
 
 /// 速度指令（固定小数点化は学習後に置き換える）
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -14,6 +18,7 @@ pub struct Action {
     pub linear: f32,
     pub angular: f32,
 }
+
 /// 入力の並び（ranges[0]が正面、左回り、1度刻み、360本)
 /// RANGE MAXは10.0で設定。front は353度～7度までで設定
 /// 置き換えの規則（+inf→RANGE_MAX、-inf→0、NaN→0、区間の最小値）
@@ -51,14 +56,48 @@ pub fn preprocess_beams(beams_raw : &[f32]) -> Result<[f32; NUM_BEAMS], &'static
 
 /// 仮のルールベース方策（エキスパート）。前方が近ければ旋回、空いていれば直進。
 pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
-    let front_beams = [beams[0],beams[1],beams[NUM_BEAMS-1]];
-    let front = front_beams[0].min(front_beams[1]).min(front_beams[2]);
-    
-    if front < 0.5 {
-        Action { linear: 0.0, angular: 0.8 }
-    } else {
-        Action { linear: 0.2, angular: 0.0 }
+    let target_beams = [beams[NUM_BEAMS-6],beams[NUM_BEAMS-5],beams[NUM_BEAMS-4],beams[NUM_BEAMS-3],beams[NUM_BEAMS-2],beams[NUM_BEAMS-1], beams[0],beams[1],beams[2], beams[3], beams[4], beams[5], beams[6]];
+    let index_array = [6,7,5,8,4,9,3,10,2,11,1,12,0];
+    let mut max_value = 0f32;
+    let mut max_idx = 7.0;
+    for i in 1..(target_beams.len()-1){
+        let mut min_value = f32::INFINITY;
+        for j in 0..3{
+            if min_value > target_beams[i-1+j]{
+                min_value = target_beams[i-1+j];
+            }
+        }
+        if max_value < min_value{
+            max_value = min_value;
+        }
     }
+    for i in index_array.iter(){
+        if max_value == target_beams[*i] {
+            max_idx = *i as f32;
+            break;
+        }
+    }
+    let mut angle = - PI / 2.0 + max_idx * PI /12.0;
+    if angle < -0.8 {
+        angle = -0.8;
+    } else if angle > 0.8 {
+        angle = 0.8;
+    }
+    let front_beams = [target_beams[4], target_beams[5], target_beams[6], target_beams[7], target_beams[8]];
+    let mut front_min:f32 = f32::INFINITY;
+    for beam in front_beams{
+        if front_min > beam {
+            front_min = beam;
+        }
+    }
+    if front_min >= D_SLOW{
+        Action { linear: VMAX, angular: angle }
+    } else if front_min < D_STOP {
+        Action { linear: 0.0, angular: angle }
+    } else {
+        Action { linear: VMAX * (front_min - D_STOP) /(D_SLOW - D_STOP), angular: angle }
+    }
+    
 }
 
 
@@ -71,7 +110,7 @@ mod tests {
         let mut b = [3.0; NUM_BEAMS];
         b[0] = 0.3;
         assert_eq!(expert(&b).linear, 0.0);
-        assert_eq!(expert(&b).angular, 0.8);
+        assert_eq!(expert(&b).angular, PI/12.0);
     }
 
     #[test]
