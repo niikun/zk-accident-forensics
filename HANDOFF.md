@@ -110,10 +110,10 @@
   衝突した状態でLiDARの正面は`-inf`になった（6章の2）。`policy_node`の`downsample()`が`-inf`を`range_max`（遠い）に変えてしまう穴が見つかった（2026-10-03に`preprocess_beams()`への切り替えで解消）
 - **閉ループ走行を達成**（2026-10-03、未コミット）: Gazebo → `ros_gz_bridge`（`config/bridge.yaml`）→ `policy_node` → Gazebo。車は箱に向かって直進し、手前で旋回する。
   途中で「旋回し続ける」不具合が出て、原因は**重心が車軸のほぼ真上（3mm後ろ）で、前に倒れていた**こと。前にもキャスターを付けて直した（6章の2）。
-  起動手順（ターミナル3〜4つ、プロジェクト直下、この順で）:
-  1. `pixi run gz sim -r worlds/forensics.sdf`
-  2. `pixi run ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=config/bridge.yaml`
-  3. `pixi run ./target/debug/policy_node`
+  起動手順（ターミナル3〜4つ、プロジェクト直下、この順で。`pixi.toml`の`[tasks]`、2026-10-03）:
+  1. `pixi run sim`（GUIなしは`pixi run sim-headless`＝`gz sim -rs`）
+  2. `pixi run bridge`
+  3. `pixi run policy`（`depends-on = ["build"]`で先にビルドする。**`build`は`policy_node`を含むcrateをビルドすること**。`-p policy`だとライブラリだけで、古いバイナリが動く）
   4. （観察）`pixi run ros2 topic echo /cmd_vel`、`pixi run ros2 topic info /cmd_vel`（Publisher/Subscriptionが各1）
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
@@ -333,6 +333,9 @@ cargo build && cargo test -p policy
 - 今後追加予定: 学習用crate（Burn）、SP1一式（`program/`=guest、`script/`=host、`lib/`=共有型）。
   SP1は`cargo prove new --bare`のテンプレートの流儀に合わせる（参考: `~/project/wood_zk_traceability`、`~/project/mpc_group_purchasing`）
 - 証明は**事後にオフラインで作る**（commit-now-prove-later）。走行中はコミットだけ行う
+- **整数のオーバーフローはdebugとreleaseで振る舞いが違う**（debugはpanic、releaseは黙ってwrap）。SP1 guestは常にreleaseでビルドされる。
+  W2で固定小数点を書くときは、`policy`の中で`checked_*`/`saturating_*`/`wrapping_*`を使い、振る舞いを明示する（ノードとguestで結果を一致させるため）。
+  `[profile.release] overflow-checks = true`も選択肢。ノードは当面debugで動かす（処理が軽いため。2026-10-03決定）
 
 ## 8. リスクと保険
 

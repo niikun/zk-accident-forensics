@@ -6,6 +6,11 @@ platforms = ["linux-64"]
 version = "0.1.0"
 
 [tasks]
+build = "cargo build"
+sim = "gz sim -r worlds/forensics.sdf"
+sim-headless = "gz sim -rs worlds/forensics.sdf"
+bridge = "ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=config/bridge.yaml"
+policy = {cmd = "./target/debug/policy_node",depends-on = ["build"]}
 
 [dependencies]
 ros-lyrical-ros-base = ">=0.13.0,<0.14"
