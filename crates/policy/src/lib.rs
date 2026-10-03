@@ -3,8 +3,10 @@
 
 /// 方策に入力するLiDARビーム数（/scanをダウンサンプルした値）
 pub const NUM_BEAMS: usize = 24;
-const NUM_RANGES: usize = 360 / NUM_BEAMS;
+const NUM_RANGES_RAW:usize = 360;
+const RANGES_PER_BEAM: usize = NUM_RANGES_RAW / NUM_BEAMS;
 pub const RANGE_MAX: f32 = 10.0;
+
 
 /// 速度指令（固定小数点化は学習後に置き換える）
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -12,19 +14,23 @@ pub struct Action {
     pub linear: f32,
     pub angular: f32,
 }
+/// 入力の並び（ranges[0]が正面、左回り、1度刻み、360本)
+/// RANGE MAXは10.0で設定。front は353度～7度までで設定
+/// 置き換えの規則（+inf→RANGE_MAX、-inf→0、NaN→0、区間の最小値）
+/// Errになる条件（長さが360でない）
 pub fn preprocess_beams(beams_raw : &[f32]) -> Result<[f32; NUM_BEAMS], &'static str> {
-    if beams_raw.len() != NUM_BEAMS * NUM_RANGES {
-        return Err("beams_raw length is not NUM_BEAMS * NUM_RANGES");
+    if beams_raw.len() != NUM_RANGES_RAW {
+        return Err("beams_raw length is not NUM_RANGES_RAW");
     }
-    let mut beams_raw_shaped = [0.0; NUM_BEAMS * NUM_RANGES];
+    let mut beams_raw_shaped = [0.0; NUM_RANGES_RAW];
     for i in 0..beams_raw.len() {
-        beams_raw_shaped[i] = beams_raw[(i+353)%(beams_raw.len())];
+        beams_raw_shaped[i] = beams_raw[(i + NUM_RANGES_RAW - RANGES_PER_BEAM / 2)%(beams_raw.len())];
     }
     let mut beams = [0.0; NUM_BEAMS];
     for i in 0..NUM_BEAMS{
-        let targets:&mut [f32] = &mut beams_raw_shaped[i * NUM_RANGES..i * NUM_RANGES + NUM_RANGES];
+        let targets:&[f32] = &beams_raw_shaped[i * RANGES_PER_BEAM..i * RANGES_PER_BEAM + RANGES_PER_BEAM];
         let mut min_score = f32::INFINITY;
-        for target in targets.iter_mut(){
+        for target in targets.iter(){
             let b:f32 = if *target == f32::INFINITY{ 
                 RANGE_MAX
             } else if *target == f32::NEG_INFINITY {
@@ -62,19 +68,18 @@ mod tests {
 
     #[test]
     fn turns_when_blocked() {
-        let mut b = [3.0; NUM_BEAMS*NUM_RANGES];
+        let mut b = [3.0; NUM_BEAMS];
         b[0] = 0.3;
-        let b2 = preprocess_beams(&b).unwrap();
-        assert_eq!(expert(&b2).linear, 0.0);
-        assert_eq!(expert(&b2).angular, 0.8);
+        assert_eq!(expert(&b).linear, 0.0);
+        assert_eq!(expert(&b).angular, 0.8);
     }
 
     #[test]
     fn test_inf_case() {
-        let b = preprocess_beams(&[f32::INFINITY; NUM_BEAMS*NUM_RANGES]).unwrap();
-        let neg_b = preprocess_beams(&[f32::NEG_INFINITY; NUM_BEAMS*NUM_RANGES]).unwrap();
-        let nan_b = preprocess_beams(&[f32::NAN; NUM_BEAMS*NUM_RANGES]).unwrap();
-        let mut mixed = [3.0_f32; NUM_BEAMS*NUM_RANGES];
+        let b = preprocess_beams(&[f32::INFINITY; NUM_RANGES_RAW]).unwrap();
+        let neg_b = preprocess_beams(&[f32::NEG_INFINITY; NUM_RANGES_RAW]).unwrap();
+        let nan_b = preprocess_beams(&[f32::NAN; NUM_RANGES_RAW]).unwrap();
+        let mut mixed = [3.0_f32; NUM_RANGES_RAW];
         mixed[0] = f32::NAN;   // 正面だけ計測失敗
         let b_mix = preprocess_beams(&mixed).unwrap();
         assert_eq!(expert(&b).linear, 0.2);
@@ -89,7 +94,7 @@ mod tests {
 
     #[test]
     fn test_preprocess_beams() {
-        let mut beams_raw = [100.0; NUM_BEAMS * NUM_RANGES];
+        let mut beams_raw = [100.0; NUM_RANGES_RAW];
         beams_raw[355] = 0.5;
         beams_raw[10] = f32::INFINITY;
         beams_raw[25] = f32::NEG_INFINITY;
@@ -103,7 +108,7 @@ mod tests {
 
     #[test]
     fn test_preprocess_beams_boundary() {
-        let beams_raw = [f32::INFINITY; NUM_BEAMS * NUM_RANGES];
+        let beams_raw = [f32::INFINITY; NUM_RANGES_RAW];
         let mut beams_raw1 = beams_raw.clone();
         beams_raw1[352] = 0.5;
         let mut beams_raw2 = beams_raw.clone();
