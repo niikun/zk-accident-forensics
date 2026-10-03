@@ -1,17 +1,24 @@
 //! LiDAR観測 → 速度指令の方策。ロボットのノードとSP1 guestで同一コードを共有する。
 #![no_std]
 
-/// 方策に入力するLiDARビーム数（/scanをダウンサンプルした値）
-/// 
 use core::f32::consts::PI;
+
+/// 方策に入力するLiDARビーム数（/scanをダウンサンプルした値）
 pub const NUM_BEAMS: usize = 24;
 const NUM_RANGES_RAW:usize = 360;
 const RANGES_PER_BEAM: usize = NUM_RANGES_RAW / NUM_BEAMS;
+/// RANGEを有限に限定するため、10.0で設定。sdfのLiDAR設定と揃える
 pub const RANGE_MAX: f32 = 10.0;
+/// 最大速度
 const VMAX:f32 = 0.2;
+/// 衝突を避けるためにこの距離になったら、速度を落とす
 const D_SLOW:f32 = 0.5;
+/// 衝突を避けるためにこの距離になったら、止まる
 const D_STOP:f32 = 0.25;
+/// 衝突を避けるためにこの距離をターゲットに速度を調整する
+/// ストップより短めに設定しないとD_STOPに到達せず停滞するため設定
 const D_TARGET:f32 = D_STOP - 0.05;
+/// 回転の最大ラジアン
 const W_MAX:f32 = 0.8;
 
 /// 速度指令（固定小数点化は学習後に置き換える）
@@ -59,12 +66,15 @@ pub fn preprocess_beams(beams_raw : &[f32]) -> Result<[f32; NUM_BEAMS], &'static
 /// 前方180度のうち、45度刻みで最も前が開いている方向を選び転換する
 /// 進行方向の障害物までの距離が、D_SLOWより大きければVMAX,それ以下なら段階的に減速し、D_STOP以下は回転する
 pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
+    // 前方‐90°~⁺90°のbeamを集約。angularの計算に使用
     let target_beams = [beams[NUM_BEAMS-6],beams[NUM_BEAMS-5],beams[NUM_BEAMS-4],beams[NUM_BEAMS-3],beams[NUM_BEAMS-2],beams[NUM_BEAMS-1], beams[0],beams[1],beams[2], beams[3], beams[4], beams[5], beams[6]];
+    // 現在前方に近い順番に抽出するために設定。argmaxの際、現在の前方に近い方を選べるように設定
     let index_array = [6,7,5,8,4,9,3,10,2,11,1];
     let mut max_value = 0f32;
     let mut max_idx:usize = 6;
     for i in 1..(target_beams.len()-1){
         let mut min_value = f32::INFINITY;
+        // 各位置の左右1つずつ計3つのbeamsのうち最も近い値を抽出
         for j in 0..3{
             if min_value > target_beams[i-1+j]{
                 min_value = target_beams[i-1+j];
@@ -76,6 +86,7 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
     }
     for i in index_array.iter(){
         let mut min_value = f32::INFINITY;
+        // 各位置の左右1つずつ計3つのbeamsのうち最も近い値を抽出
         for j in 0..3{
             if min_value > target_beams[i-1+j]{
                 min_value = target_beams[i-1+j];
@@ -92,6 +103,7 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
     } else if angle > W_MAX {
         angle = W_MAX;
     }
+    // Linearの速度を調べるために前方5つのbeamsの最小値をもとに計算
     let front_beams = [target_beams[4], target_beams[5], target_beams[6], target_beams[7], target_beams[8]];
     let mut front_min:f32 = f32::INFINITY;
     for beam in front_beams{
@@ -99,6 +111,8 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
             front_min = beam;
         }
     }
+    // front_min < D_STOP && min_idxが前方(6)の場合も入れていたが、
+    // front_min < D_STOPと競合して振動して、止まってしまうため削除
     if front_min >= D_SLOW{
         Action { linear: VMAX, angular: angle }
     } else if front_min < D_STOP{
@@ -113,7 +127,7 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    // preprocessを通さず、24本beamsでexpert単体の挙動を確認
     #[test]
     fn turns_when_blocked() {
         let mut b = [3.0; NUM_BEAMS];
@@ -122,8 +136,8 @@ mod tests {
         assert_eq!(expert(&b).angular, PI/6.0);
     }
 
-    //塞がっているときにargmaxの向きへ回ると、argmaxの向きと固定の旋回の向きが食い違って往復する。
-    //そのため、回転を一方向に固定する
+    // ふさがっているときにargmaxの向きへ回ると、argmaxの向きと固定の浅海の向きが食い違って往復す
+    // そのため、回転を一方向に固定する
     #[test]
     fn test_turn_left_when_blocked() {
         let mut beams1 = [0.0f32 ;NUM_BEAMS];
@@ -140,7 +154,7 @@ mod tests {
         assert_eq!(expert(&beams2).linear, 0.0);
         assert_eq!(expert(&beams2).angular, W_MAX);
     }
-
+    // beams_raw->preprocess_beams->expertの流れを、ifで設定した様々な値で確認
     #[test]
     fn test_inf_case() {
         let b = preprocess_beams(&[f32::INFINITY; NUM_RANGES_RAW]).unwrap();
@@ -158,7 +172,7 @@ mod tests {
         assert_eq!(expert(&b_mix).linear, 0.0);
         assert_eq!(expert(&b_mix).angular, W_MAX);        
     }
-
+    // preprocessの挙動を確認。対象はifで場合分けした値を含む。
     #[test]
     fn test_preprocess_beams() {
         let mut beams_raw = [100.0; NUM_RANGES_RAW];
@@ -172,7 +186,8 @@ mod tests {
         assert_eq!(beams[2],0.0);
         assert_eq!(beams[3],0.0);    
     }
-
+    // beams_raw(360本)->preprocess->beams(24本)にまとめる際、
+    // 境界の値がちゃんと分けられているか確認
     #[test]
     fn test_preprocess_beams_boundary() {
         let beams_raw = [f32::INFINITY; NUM_RANGES_RAW];

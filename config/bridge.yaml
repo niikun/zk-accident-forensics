@@ -1,4 +1,5 @@
 # lidar and cmd configuration.
+# gz側の/lidar2と、ros2側の/scamを、/lidar2の名前で対応させる
 - gz_topic_name: "/lidar2"
   ros_topic_name: "/scan"
   ros_type_name: "sensor_msgs/msg/LaserScan"
@@ -6,6 +7,7 @@
   lazy: true
   direction: GZ_TO_ROS
 
+# gz側の/model/vehicle_blue/cmd_velと、ros2側の/cmd_velを、/model/vehicle_blue/cmd_velの名前で対応させる
 - gz_topic_name: "/model/vehicle_blue/cmd_vel"
   ros_topic_name: "/cmd_vel"
   ros_type_name: "geometry_msgs/msg/Twist"
