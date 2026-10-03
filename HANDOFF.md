@@ -108,7 +108,14 @@
   `range_max`は引数をやめ、`policy::RANGE_MAX`（`pub const`、10.0＝SDFの`<max>`）に固定した（方策の入力の定義なので、ノードとguestで食い違わないようにするため）
 - **障害物を置いた**（2026-09-30、`22bda7c`でコミット済み）: `model_with_lidar`を消し、x=1.0, y=2に静的な箱`box`（0.2×0.2×0.3）を置いた。車が箱にぶつかって止まる。
   衝突した状態でLiDARの正面は`-inf`になった（6章の2）。`policy_node`の`downsample()`が`-inf`を`range_max`（遠い）に変えてしまう穴が見つかった（2026-10-03に`preprocess_beams()`への切り替えで解消）
-- 疎通確認のやり方（ターミナル3つ、すべてプロジェクト直下で）:
+- **閉ループ走行を達成**（2026-10-03、未コミット）: Gazebo → `ros_gz_bridge`（`config/bridge.yaml`）→ `policy_node` → Gazebo。車は箱に向かって直進し、手前で旋回する。
+  途中で「旋回し続ける」不具合が出て、原因は**重心が車軸のほぼ真上（3mm後ろ）で、前に倒れていた**こと。前にもキャスターを付けて直した（6章の2）。
+  起動手順（ターミナル3〜4つ、プロジェクト直下、この順で）:
+  1. `pixi run gz sim -r worlds/forensics.sdf`
+  2. `pixi run ros2 run ros_gz_bridge parameter_bridge --ros-args -p config_file:=config/bridge.yaml`
+  3. `pixi run ./target/debug/policy_node`
+  4. （観察）`pixi run ros2 topic echo /cmd_vel`、`pixi run ros2 topic info /cmd_vel`（Publisher/Subscriptionが各1）
+- 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
   3. `pixi run ros2 topic pub -r 1 /scan sensor_msgs/msg/LaserScan "{range_max: 10.0, ranges: $(python3 scripts/dummy.py)}"` → 2に`z: 0.8`が出れば成功
@@ -168,7 +175,7 @@ cargo build && cargo test -p policy
 
 | 週 | ゴール |
 |---|---|
-| W1 9/28–10/4 | ✅ Rustノードの疎通 → ros_gzを導入し、差動二輪＋LiDARのロボットをWSLgで表示 → ルールベース走行（10/1は第5回ROS2講義） |
+| W1 9/28–10/4 | ✅ Rustノードの疎通 → ✅ ros_gzを導入し、差動二輪＋LiDARのロボットをWSLgで表示 → ✅ ルールベース走行（閉ループ、10/3）（10/1は第5回ROS2講義） |
 | W2 10/5–11 | エキスパートでデモ収集 → BurnでMLPを学習 → 固定小数点推論を`policy`に実装 → 学習済み方策で走行。**ここで動画を1本撮り、合格ラインを確保** |
 | W3 10/12–18 | `blackbox_node`（ハッシュチェーン・コミットメント公開・暗号化ログ）、SP1でS1+S2 |
 | W4 10/19–25 | S3（事故の主張）、シナリオB/C、検証結果の可視化（✅/❌） |
@@ -263,12 +270,25 @@ cargo build && cargo test -p policy
      - **学び**: `cargo build`はテストをコンパイルしない。シグネチャを変えたら`cargo test`も回す
    - ⬜ **次はここから**（ユーザーが実装）
      1. 仕上げとコミット: ✅ `eprint!`→`eprintln!`、✅ 4本の偽スキャンでErrの経路を確認、✅ `dummy.py`を`scripts/`に移動（いずれも2026-10-03）、✅ コミット（`b811d5d`）
-     2. 片付け: `NUM_RANGES`→`RANGES_PER_BEAM`など意味の通る名前に、`353`を定数から計算する、24行目の`&mut`と`iter_mut()`を`&`と`iter()`に、`preprocess_beams`に`///`コメント（入力の並びと置き換え規則）、
-        `turns_when_blocked`は`expert()`だけを試す形（24本を直接渡す）に戻す
+     2. ✅ 片付け（2026-10-03、`a7502a2`）: 定数を`NUM_RANGES_RAW`（360）・`RANGES_PER_BEAM`（15）に整理、ずらし量は`RANGES_PER_BEAM / 2`、`&`と`iter()`に、
+        `preprocess_beams`に`///`コメント、`turns_when_blocked`は24本を直接`expert()`に渡す形に戻した。残りは`RANGE_MAX`への`///`（単位m、SDFの`<max>`と揃える）だけ
      3. ノードで`scan.range_max`と`policy::RANGE_MAX`が食い違うときの扱いを決める（警告か`Err`扱いか。SDFだけ変えて定数を直し忘れる事故を防ぐ）
      4. （任意）`dummy.py`で0.3を置く位置を変え、`i=8`（`beams[1]`→旋回）をノード経由で確かめる。✅ `i=30`（`beams[2]`→直進）は確認済み（2026-10-03）
+   - ✅ **閉ループで「ずっと旋回する」不具合を直した**（2026-10-03、未コミット）
+     - 症状: 直進して箱の手前で止まったあと、回り続ける。スキャンは正面0.211mで、左右対称に`0.211/cos(角度)`、±90度より後ろは`inf`＝**前に約28〜30度傾き、LiDARが床を写していた**（後ろのキャスターが浮いていた）。
+       床の線は車と一緒に回るので、`expert()`は永遠に「前方0.5m未満」と判断する
+     - 根本原因: 小型化で車輪をx=0（車体中央）に移し、キャスターは後ろ（x=−0.07）だけ。重心はx≈−0.003で**車軸のほぼ真上**。キャスターに約4%しか荷重がなく、止まる・回り始める力で前に倒れる
+     - 修正: **前にもキャスター**`caster_front`（x=+0.07、r=0.05、mass 0.05、inertia 0.00005×3、`caster_front_joint` ball）。後ろは`caster_back`／`caster_back_joint`に改名。回転の中心＝LiDARの位置は保った
+     - **LiDARの`range_min`を0.08→0.15に変更**: 実機の2D LiDARに近い値。キャスターの先端（0.12）より外側なので、車体に触れる距離のものは必ず`-inf`（→0）になる。
+       ただし`-inf`は「0.15より内側に何かある」で、接触そのものではない（衝突の検知はcontactセンサーで取る案が有力）
+     - **学び**: 車輪の位置を変えたら、重心と支点（車輪・キャスター）の関係を計算し直す。重心が支点の間に余裕を持って入っているか
+     - **学び**: 低い2D LiDARは、傾くと床を障害物として写す。スキャンの形（左右対称の`d/cos`、前半分だけ有限値）から傾きと角度（sin＝高さ/距離）を推定できる
+     - **学び**: 1つのmodelの中で、jointの名前も一意にする（重複すると`gz sdf -k`が`joint with name[...] already exists`）
+     - **学び**: bridgeのYAMLは、両側で同じ名前なら`topic_name`、違うなら`ros_topic_name`＋`gz_topic_name`。`*_type_name`には型を書く（名前と取り違えやすい）
    - LiDARの残りの仕様: `update_rate`（今10Hz、方策の周期＝反応時間の下限）、トピック名（今`lidar2`。bridgeで`/scan`につなぐ）
-3. `ros_gz_bridge`で`/scan`と`/cmd_vel`をブリッジし、`policy_node`で走らせる（設定は`config/bridge.yaml`に置く案）
+3. ✅ `ros_gz_bridge`で`/scan`（← gz `/lidar2`）と`/cmd_vel`（→ gz `/model/vehicle_blue/cmd_vel`）をブリッジし、`policy_node`で走らせた（2026-10-03、`config/bridge.yaml`、未コミット）。
+   名前はbridgeのYAMLで合わせる（SDFとノードはそのまま。実機ではbridgeを外すだけ）。LiDARは`lazy: true`、cmd_velは`lazy: false`
+   - 未確認: 旋回して箱が前方から外れたあと直進に戻るか、そのまま走り続けた先の振る舞い（ワールドに壁はない）
 4. 起動手順を`pixi.toml`の`[tasks]`にまとめる（両PCで同じコマンドで起動できる）。`gz sim -r`（再生状態で起動）を入れる
 
 ### SDF作りのメモ
@@ -282,6 +302,9 @@ cargo build && cargo test -p policy
   gzのlidarを`min_angle=-π, max_angle=π`にすると`ranges[0]`は真後ろを向く。SDFの角度範囲で合わせるか、`downsample()`で回転させるかはユーザーが決める
   （方策の入力の定義になり、SP1 guestと共有する）。`samples`は24の倍数にし、360度で始点と終点が重複しないようにする
 - **SDFの数値はS3の公開パラメータになる**ので、決めたら表にして残す
+  - 決まった値（2026-10-03）: LiDAR `range_min` 0.15m／`range_max` 10m（=`policy::RANGE_MAX`）／`update_rate` 10Hz、diff-drive `min_linear_acceleration` −1m/s²・`max_linear_velocity` 0.5m/s、
+    車体の前端 0.07m・前キャスターの先端 0.12m（LiDAR中心から）
+  - 停止距離の目安: 0.2m/sならv²/2a＝0.02m、反応時間（10Hz→0.1秒）分0.02mを足して約0.04m。障害物が`range_min`（0.15）より内側に入った時点で、止まれるかの境目にいる
   - `max_linear_velocity`、`min_linear_acceleration`（最大減速度） → 停止距離
   - LiDARの`update_rate` → 方策の周期（反応時間の下限）
   - LiDARの最大距離と、障害物が「突然出現する」距離の関係

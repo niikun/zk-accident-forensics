@@ -1,0 +1,14 @@
+# lidar and cmd configuration.
+- gz_topic_name: "/lidar2"
+  ros_topic_name: "/scan"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  lazy: true
+  direction: GZ_TO_ROS
+
+- gz_topic_name: "/model/vehicle_blue/cmd_vel"
+  ros_topic_name: "/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  lazy: false
+  direction: ROS_TO_GZ
