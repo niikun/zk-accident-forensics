@@ -11,6 +11,8 @@ pub const RANGE_MAX: f32 = 10.0;
 const VMAX:f32 = 0.2;
 const D_SLOW:f32 = 0.5;
 const D_STOP:f32 = 0.25;
+const D_TARGET:f32 = D_STOP - 0.05;
+const W_MAX:f32 = 0.8;
 
 /// 速度指令（固定小数点化は学習後に置き換える）
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,12 +56,13 @@ pub fn preprocess_beams(beams_raw : &[f32]) -> Result<[f32; NUM_BEAMS], &'static
     Ok(beams)   
 }
 
-/// 仮のルールベース方策（エキスパート）。前方が近ければ旋回、空いていれば直進。
+/// 前方180度のうち、45度刻みで最も前が開いている方向を選び転換する
+/// 進行方向の障害物までの距離が、D_SLOWより大きければVMAX,それ以下なら段階的に減速し、D_STOP以下は回転する
 pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
     let target_beams = [beams[NUM_BEAMS-6],beams[NUM_BEAMS-5],beams[NUM_BEAMS-4],beams[NUM_BEAMS-3],beams[NUM_BEAMS-2],beams[NUM_BEAMS-1], beams[0],beams[1],beams[2], beams[3], beams[4], beams[5], beams[6]];
-    let index_array = [6,7,5,8,4,9,3,10,2,11,1,12,0];
+    let index_array = [6,7,5,8,4,9,3,10,2,11,1];
     let mut max_value = 0f32;
-    let mut max_idx = 7.0;
+    let mut max_idx:usize = 6;
     for i in 1..(target_beams.len()-1){
         let mut min_value = f32::INFINITY;
         for j in 0..3{
@@ -72,16 +75,22 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
         }
     }
     for i in index_array.iter(){
-        if max_value == target_beams[*i] {
-            max_idx = *i as f32;
+        let mut min_value = f32::INFINITY;
+        for j in 0..3{
+            if min_value > target_beams[i-1+j]{
+                min_value = target_beams[i-1+j];
+            }
+        }
+        if max_value == min_value {
+            max_idx = *i;
             break;
         }
     }
-    let mut angle = - PI / 2.0 + max_idx * PI /12.0;
-    if angle < -0.8 {
-        angle = -0.8;
-    } else if angle > 0.8 {
-        angle = 0.8;
+    let mut angle = - PI / 2.0 + max_idx as f32 * PI /12.0;
+    if angle < -W_MAX {
+        angle = -W_MAX;
+    } else if angle > W_MAX {
+        angle = W_MAX;
     }
     let front_beams = [target_beams[4], target_beams[5], target_beams[6], target_beams[7], target_beams[8]];
     let mut front_min:f32 = f32::INFINITY;
@@ -92,10 +101,10 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
     }
     if front_min >= D_SLOW{
         Action { linear: VMAX, angular: angle }
-    } else if front_min < D_STOP {
-        Action { linear: 0.0, angular: angle }
+    } else if front_min < D_STOP{
+        Action { linear: 0.0, angular: W_MAX }
     } else {
-        Action { linear: VMAX * (front_min - D_STOP) /(D_SLOW - D_STOP), angular: angle }
+        Action { linear: VMAX * (front_min - D_TARGET) /(D_SLOW - D_TARGET), angular: angle }
     }
     
 }
@@ -109,8 +118,27 @@ mod tests {
     fn turns_when_blocked() {
         let mut b = [3.0; NUM_BEAMS];
         b[0] = 0.3;
-        assert_eq!(expert(&b).linear, 0.0);
-        assert_eq!(expert(&b).angular, PI/12.0);
+        assert_eq!(expert(&b).linear, VMAX*(0.3-D_TARGET)/(D_SLOW - D_TARGET));
+        assert_eq!(expert(&b).angular, PI/6.0);
+    }
+
+    //塞がっているときにargmaxの向きへ回ると、argmaxの向きと固定の旋回の向きが食い違って往復する。
+    //そのため、回転を一方向に固定する
+    #[test]
+    fn test_turn_left_when_blocked() {
+        let mut beams1 = [0.0f32 ;NUM_BEAMS];
+        beams1[1] = 3.0;
+        beams1[2] = 3.0;
+        beams1[3] = 3.0;
+        assert_eq!(expert(&beams1).linear, 0.0);
+        assert_eq!(expert(&beams1).angular, W_MAX);
+
+        let mut beams2 = [0.0f32 ;NUM_BEAMS];
+        beams2[NUM_BEAMS-1] = 3.0;
+        beams2[NUM_BEAMS-2] = 3.0;
+        beams2[NUM_BEAMS-3] = 3.0;
+        assert_eq!(expert(&beams2).linear, 0.0);
+        assert_eq!(expert(&beams2).angular, W_MAX);
     }
 
     #[test]
@@ -124,11 +152,11 @@ mod tests {
         assert_eq!(expert(&b).linear, 0.2);
         assert_eq!(expert(&b).angular, 0.0);
         assert_eq!(expert(&neg_b).linear, 0.0);
-        assert_eq!(expert(&neg_b).angular, 0.8);
+        assert_eq!(expert(&neg_b).angular, W_MAX);
         assert_eq!(expert(&nan_b).linear, 0.0);
-        assert_eq!(expert(&nan_b).angular, 0.8);      
+        assert_eq!(expert(&nan_b).angular, W_MAX);      
         assert_eq!(expert(&b_mix).linear, 0.0);
-        assert_eq!(expert(&b_mix).angular, 0.8);        
+        assert_eq!(expert(&b_mix).angular, W_MAX);        
     }
 
     #[test]
