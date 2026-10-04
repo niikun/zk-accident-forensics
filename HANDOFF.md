@@ -117,8 +117,11 @@
   4. （観察）`pixi run ros2 topic echo /cmd_vel`、`pixi run ros2 topic info /cmd_vel`（Publisher/Subscriptionが各1）
 - **ワールドを「8の字」の部屋にした**（2026-10-03、`d1438f0`。箱は削除）。詳細は6章の5
 - **`expert()`を作り直した**（2026-10-04、`202797c`）: 窓の最小値によるargmax（greedy）＋前方の距離に応じた滑らかな減速＋塞がったら固定の向きで旋回。8の字の部屋を詰まらずに走る。詳細は6章の5
-- **`expert()`を片付けた**（2026-10-04、コメントは`dcad969`、fmtは`e768bc4`、以降は**未コミット**）: 窓の最小値の計算を1回に（`min_values`の添字＝`target_beams`の番号）、
+- **`expert()`を片付けた**（2026-10-04、`dcad969`・`e768bc4`・`ce755e7`）: 窓の最小値の計算を1回に（`min_values`の添字＝`target_beams`の番号）、
   同点は`TIE_EPS`（0.01m）以内なら正面に近い方、`target_beams`を`%`で回して作る（`FRONT_BEAMS_LEN`）、clampを使う、`-inf`/`NaN`の条件をまとめた。`test_eps`を追加し、`cargo test -p policy`は6件通過。詳細は6章の5
+- **デモの記録と書き出しができた**（2026-10-04、元のPC、**未コミット**: `scripts/data_reshape.py`・`pixi.toml`/`pixi.lock`（`mcap`・`pandas`を追加）・`.gitignore`（`/bags`））。
+  生の`/scan`と`/cmd_vel`を`ros2 bag record`で`bags/<run>/`に記録し、`data_reshape.py`でCSVにする。`bags/run_01`（71秒、712組）、`bags/run02`（16秒、160組）。詳細は6章の5
+  - **bagとCSVはgitに入らない**（`/bags`）。サブPCには無いので、記録し直すかコピーする（4章「サブPCで作業を再開する手順」）
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -157,6 +160,27 @@
   - 急ぎではない。デモ収集はGUIなし（`gz sim -s`）で回せる
 - 秘書ノート（`~/company`、`niikun/company`）はgitで同期する。サブPCは7/19で止まっているのでpullが必要
 
+### サブPCで作業を再開する手順（2026-10-04時点）
+
+サブPCの初回のセットアップ（pixiの導入など）は済んでいる（6章の0-4）。最後にサブPCで作業したのは9/30ごろで、その後に増えたものを取り込む手順。
+
+0. **前提: 元のPCで、未コミットのもの（`scripts/data_reshape.py`、`pixi.toml`/`pixi.lock`、`.gitignore`、`HANDOFF.md`）をコミットしてpushしておく**
+1. 取り込む: プロジェクト直下で`git status`（サブPC側に未コミットの変更がないか）→ `git pull`
+2. 環境を更新する: `pixi install --locked`（`mcap`と`pandas`が増えている。lockが書き換わらないこと）
+   - 確認: `pixi run python -c "import mcap, pandas, rclpy; print('ok')"`
+3. ビルドとテスト: `pixi run cargo build` → `pixi run cargo test -p policy`（6件通過するはず）
+   - `target/`はPCごとに作る（RPATHが絶対パスのため）。おかしければ`cargo clean`してからビルド
+   - `pixi run`なしの`cargo test`（VS Codeのテストボタンを含む）は`rclrs`のビルドで落ちる
+4. 閉ループの確認（ターミナル3つ、3章の起動手順）: `pixi run sim-headless` → `pixi run bridge` → `pixi run policy`。
+   ワールドが8の字の部屋になり、車が壁にぶつからずに走り続けることを確かめる（GUIで見るなら`pixi run sim`）
+5. **bagはgitに入っていない**（`/bags`）。サブPCで使うデータは次のどちらかで用意する
+   - おすすめ: **サブPCで記録し直す**（4の状態で`pixi run ros2 bag record -o bags/<run名> --topics /scan /cmd_vel`）。記録から書き出しまでの流れがサブPCでも動くことの確認にもなる
+   - 元のPCのデータを使う: `bags/<run名>/`のフォルダごと（`.mcap`と`metadata.yaml`）をUSBやクラウドドライブなどで運び、`bags/`の下に置く
+6. 書き出し: `pixi run python scripts/data_reshape.py bags/<run名>` → 同じフォルダに`data_scan.csv`と`data_cmd_vel.csv`ができる
+7. （残っていれば）秘書ノート`~/company`を`git pull`（6章の0-4-7）
+
+注意: サブPCのGazeboはGUIありでRTF70%超（元のPCと同程度）。デモの記録はGUIなし（`sim-headless`）で回すほうが速く、安定する。
+
 ### 元のPCの事実（apt版。pixi移行後は参考）
 
 - OS: WSL2（Ubuntu 26.04）、ROS 2 **Lyrical**（`/opt/ros/lyrical`）、rustc/cargo 1.97
@@ -185,7 +209,7 @@ cargo build && cargo test -p policy
 | W4 10/19–25 | S3（事故の主張）、シナリオB/C、検証結果の可視化（✅/❌） |
 | W5 10/26–11/1 | 動画・レポート・README仕上げ、提出 |
 
-## 6. 次にやること（W1は完了、W2の準備中。次は5の「残り」→デモの記録）
+## 6. 次にやること（W1は完了、W2の準備中。次は5の「Rustでラベルを作る」）
 
 0. 環境をpixiに統一する（4章。ユーザーが実施）
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
@@ -323,20 +347,37 @@ cargo build && cargo test -p policy
        - **`expert()`に状態（直前の旋回の向きなど）を持たせない**: MLPは今の24本だけを見るので、同じ入力に違う出力のデモが混ざると真似できない。模倣学習のお手本は**beamsだけで決まる純粋な関数**にする
        - テストは「直す前のコードで落ち、直した後で通る」入力にする（往復のテストは左を3区間空ける。1区間だけだと窓のスコアが0で、古いコードでも通ってしまう）
        - `pixi run`なしの`cargo test`（やVS Codeのテストボタン）は`ROS_DISTRO`がなく`rclrs`のビルドで落ちる。`pixi run cargo test -p policy`で実行する
-     - ✅ **片付け**（2026-10-04、一部未コミット）: 重複の解消、`TIE_EPS`（差が0.01m未満なら同点→`index_array`の順）、`target_beams`をループで作る、clippyの3件（clamp、`-inf`/`NaN`の`if`、スライスのコピー）
+     - ✅ **片付け**（2026-10-04、`ce755e7`）: 重複の解消、`TIE_EPS`（差が0.01m未満なら同点→`index_array`の順）、`target_beams`をループで作る、clippyの3件（clamp、`-inf`/`NaN`の`if`、スライスのコピー）
        - **学び**: 配列の長さは`const`でないと書けない（`let`の変数はE0435）。長さは定数から決め、同じ値を2か所に書かない
        - **学び**: 窓のスコアは最小値なので、「ほぼ同点」のテストは**その窓だけに入っている区間を一番小さく**する。テストは比較を`==`に戻して**落ちる**ことを確かめる（`test_eps`は確認済み）
        - **学び**: `4..8`は8を含まない。書き換えで`front_min`が4区間（右30〜左15度）になりかけた。今は`4..=8`。テストでは捕まらなかった
        - 右端の窓（1番）だけが空いている入力でパニックしないことは、scratchpadで全窓について確認済み（テストは追加しないと決めた）
        - 窓の幅3区間は維持（5区間にすると通路で両側の壁を拾い、候補も±60度に狭まる）。正面の6・`index_array`・`front_min`の`4..=8`は手書きのまま（ビーム数を変えるときにまとめて定数化）
-     - ⬜ **残り（次はここから）**: 1) 未コミットの`lib.rs`をコミット 2) コメントの残り（`W_MAX`の二役＝角度の上限rad／旋回の角速度rad/s、単位m・m/s、`FRONT_BEAMS_LEN`、146行目の「浅海」、35行目の`RANGE MAX`、72行目の`‐`）
-       3) clippyの残り2件（`for i in 0..FRONT_BEAMS_LEN`は残す方針、`for i in 4..=8`はスライス`&target_beams[4..=8]`を回せば消える）4) （任意）左30度だけ`D_STOP`未満で停止するテスト
+     - 残り（動作に影響なし、ついでに直す程度）: 単位（m・m/s）と`FRONT_BEAMS_LEN`のコメント、72行目の`‐`、clippyの2件（`for i in 0..FRONT_BEAMS_LEN`は残す方針、`for i in 4..=8`はスライス`&target_beams[4..=8]`を回せば消える）、（任意）左30度だけ`D_STOP`未満で停止するテスト
      - 未確認: 同じ軌道を繰り返すか（デモの多様性）。旋回方向を固定したので、左に道があっても最悪ほぼ1周回る
-   - ⬜ **デモの記録（次はここから）**（決定: 24本のbeamsと`Action`をrosbagに記録する。pixi環境に`rosbag2`と`rosbag2_storage_mcap`、`std_msgs`のRustバインディングあり）
-     - beamsとactionは同じ時刻の組にする。`policy_node`から1つのメッセージ（`std_msgs/msg/Float32MultiArray`に24＋2）で出せば、独自のメッセージ型が要らず、時刻のずれもない
-     - 代案: 生の`/scan`と`/cmd_vel`を記録し、24本は後で`preprocess_beams`で作る（前処理を変えても集め直さずに済む）。どちらにするかは未決
-     - 読み出し: Burn（Rust）なら`mcap` crate＋CDRのデコード、またはPythonの`rosbags`でCSV/npyに変換。未決
-     - 記録用トピックは生の観測を流すので、学習時だけ使い、本番の走行では出さない（コンセプトとの整合）
+   - ✅ **デモの記録**（2026-10-04、元のPC）
+     - **決定: 生の`/scan`と`/cmd_vel`をそのまま記録する**（ノードは変えない）。教師ラベル（行動）は記録した`/scan`から`preprocess_beams()`→`expert()`で**オフラインで再計算**する
+       - 理由: `expert()`はbeamsだけで決まる純粋な関数なので、ラベルは何度でも作り直せる。前処理や`expert()`を変えても集め直さずに済む。blackboxが生の360本をコミットする設計とも同じ形
+       - 記録した`/cmd_vel`は、再計算した行動と一致するかの確認に使う（**S2の予行**。食い違えばノードとオフラインの計算がずれている）
+     - 記録（3つ起動してから、4つ目のターミナルで）: `pixi run ros2 bag record -o bags/<run名> --topics /scan /cmd_vel`、`Ctrl+C`で止める。確認は`pixi run ros2 bag info bags/<run名>`
+       - `--topics`（複数形）で、トピックは空白区切り（`[ ]`やカンマは不可）。保存形式の既定は`mcap`
+       - `-o`は1回ごとに別のサブフォルダにする（既にあるフォルダを指定するとエラー）。`-o bags`のように直下に作ると、次回から使えない
+       - bridgeのLiDARは`lazy: true`なので、`policy_node`を起動してから記録する
+     - 結果: `/scan`と`/cmd_vel`は同数（1スキャンにつき1指令）、10Hzで取りこぼしなし。約30KB/秒（10分で約18MB）
+     - **書き出し**: `pixi run python scripts/data_reshape.py bags/<run名>` → 同じフォルダに`data_scan.csv`と`data_cmd_vel.csv`
+       - `data_scan.csv`: `header_stamp`（シミュレーション時刻、ns）、`log_time`（bagの受信時刻、ns）、`r0`〜`r359`。run02は160行×362列、`header_stamp`はすべて0.1秒刻み（**シミュレーション時刻で正確に10Hz**）
+       - `data_cmd_vel.csv`: `log_time`、`linear_x/y/z`、`angular_x/y/z`。`Twist`にはheaderがないので時刻は受信時刻だけ
+       - `inf`/`nan`は**Pythonで置き換えない**（置き換えはRustの`preprocess_beams()`の仕事。Rustの`"inf".parse::<f32>()`は読める）。部屋が4m四方なので、今のデータに`inf`は0件
+       - 読み出しは`mcap`（`make_reader`→`iter_messages()`）＋`rclpy.serialization.deserialize_message`。`rosbag2_py`も環境にある
+       - **学び**: `iter_messages()`の`message`はmcapの記録（`log_time`と`data`）で、`header`などは`deserialize_message`で戻したメッセージ側にある。`header.stamp`は`sec`/`nanosec`のオブジェクトで、そのままCSVにすると文字列になる
+       - **学び**: `open()`は`*`を展開しない（`Path(...).glob()`を使い、`list()`にしてから`[0]`）。Pythonの長さは`len(x)`。引数の先頭に`/`を付けると絶対パスになる
+     - 気づき（学習の設計で使う）: `angular_z`は0.0／0.262／0.524／0.785／0.8／−0.8の**飛び飛びの値**（13方向のargmax＋`W_MAX`で切るため）。MLPを回帰にするか13方向の分類にするかを決める
+     - 確かめておくこと: bagの`Duration`は実時間。GUIありはRTF約70%なので実時間では約7Hzになるはず。S3で反応時間や停止距離を判定するときは`header.stamp`（シミュレーション時刻）を使う。RTFは`gz topic -e -t /stats`の`real_time_factor`
+   - ⬜ **次はここから: Rustでラベルを作る＋S2の予行**
+     1. 未コミットの4つ（`scripts/data_reshape.py`、`pixi.toml`/`pixi.lock`、`.gitignore`）と`HANDOFF.md`をコミットしてpush
+     2. 置き場所を決める（新しいcrate〔学習用のBurnのcrateと兼ねる〕か、`robot_nodes`の`bin`か。`policy`は`no_std`なので入れない）
+     3. 2つのCSVを読み、各スキャンを`preprocess_beams()`→`expert()`に通す。`log_time`で「スキャンの直後に来た`/cmd_vel`」と対応させ、一致するか比べる（`f32`→`f64`の広げ方の端数に注意）
+     4. デモを本格的に集める（数分〜十数分。開始位置・向きを変える）
    - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討
 
 ### SDF作りのメモ

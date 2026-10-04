@@ -15,6 +15,8 @@ policy = {cmd = "./target/debug/policy_node",depends-on = ["build"]}
 [dependencies]
 ros-lyrical-ros-base = ">=0.13.0,<0.14"
 ros-lyrical-ros-gz = ">=3.0.10,<4"
+mcap = ">=1.5.0,<2"
+pandas = ">=3.0.6,<4"
 
 [activation.env]
 CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-Wl,-rpath,$CONDA_PREFIX/lib"
