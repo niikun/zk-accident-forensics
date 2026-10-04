@@ -19,7 +19,7 @@ const D_STOP: f32 = 0.25;
 /// 衝突を避けるためにこの距離をターゲットに速度を調整する
 /// ストップより短めに設定しないとD_STOPに到達せず停滞するため設定
 const D_TARGET: f32 = D_STOP - 0.05;
-/// 回転の最大ラジアン
+/// 角度の上限（rad）と、塞がったときの旋回の角速度（rad/s）
 const W_MAX: f32 = 0.8;
 /// 挙動を安定させるため、距離がほぼ同じ場合、差がこれ未満なら同点とみなす
 const TIE_EPS: f32 = 0.01;
@@ -32,7 +32,7 @@ pub struct Action {
 }
 
 /// 入力の並び（ranges[0]が正面、左回り、1度刻み、360本)
-/// RANGE MAXは10.0で設定。front は353度～7度までで設定
+/// RANGE_MAXは10.0で設定。front は353度～7度までで設定
 /// 置き換えの規則（+inf→RANGE_MAX、-inf→0、NaN→0、区間の最小値）
 /// Errになる条件（長さが360でない）
 pub fn preprocess_beams(beams_raw: &[f32]) -> Result<[f32; NUM_BEAMS], &'static str> {
@@ -52,9 +52,7 @@ pub fn preprocess_beams(beams_raw: &[f32]) -> Result<[f32; NUM_BEAMS], &'static 
         for target in targets.iter() {
             let b: f32 = if *target == f32::INFINITY {
                 RANGE_MAX
-            } else if *target == f32::NEG_INFINITY {
-                0.0
-            } else if target.is_nan() {
+            } else if *target == f32::NEG_INFINITY || target.is_nan() {
                 0.0
             } else {
                 *target
@@ -68,10 +66,10 @@ pub fn preprocess_beams(beams_raw: &[f32]) -> Result<[f32; NUM_BEAMS], &'static 
     Ok(beams)
 }
 
-/// 前方180度のうち、45度刻みで最も前が開いている方向を選び転換する
-/// 進行方向の障害物までの距離が、D_SLOWより大きければVMAX,それ以下なら段階的に減速し、D_STOP以下は回転する
+/// 15度刻みの13方向から、3区間（45度）の窓の最小値で選ぶ。同点（TIE_EPS未満の差）は正面に近い方
+/// 進行方向の障害物までの距離が、D_SLOWより大きければVMAX,それ以下なら段階的に減速し、D_STOP未満で、その場で左に旋回する
 pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
-    // 前方‐90°~⁺90°のbeamを集約。angularの計算に使用
+    // 前方‐90°~+90°のbeamを集約。angularの計算に使用
     let mut target_beams = [0.0; FRONT_BEAMS_LEN];
     for i in 0..FRONT_BEAMS_LEN {
         let idx = (NUM_BEAMS - FRONT_BEAMS_LEN / 2 + i) % NUM_BEAMS;
@@ -101,29 +99,21 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
             break;
         }
     }
-    let mut angle = -PI / 2.0 + max_idx as f32 * 2.0 * PI / NUM_BEAMS as f32;
-    if angle < -W_MAX {
-        angle = -W_MAX;
-    } else if angle > W_MAX {
-        angle = W_MAX;
-    }
+    let angle = -PI / 2.0 + max_idx as f32 * 2.0 * PI / NUM_BEAMS as f32;
+    let angle_shaped = angle.clamp(-W_MAX, W_MAX);
     // Linearの速度を調べるために前方5つのbeamsの最小値をもとに計算
-    let mut front_beams = [0.0; 5];
-    for i in 0..5 {
-        front_beams[i] = target_beams[4 + i];
-    }
     let mut front_min: f32 = f32::INFINITY;
-    for beam in front_beams {
-        if front_min > beam {
-            front_min = beam;
+    for i in 4..=8 {
+        if front_min > target_beams[i] {
+            front_min = target_beams[i];
         }
     }
-    // front_min < D_STOP && min_idxが前方(6)の場合も入れていたが、
+    // front_min < D_STOP && max_idxが前方(6)の場合も入れていたが、
     // front_min < D_STOPと競合して振動して、止まってしまうため削除
     if front_min >= D_SLOW {
         Action {
             linear: VMAX,
-            angular: angle,
+            angular: angle_shaped,
         }
     } else if front_min < D_STOP {
         Action {
@@ -133,7 +123,7 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
     } else {
         Action {
             linear: VMAX * (front_min - D_TARGET) / (D_SLOW - D_TARGET),
-            angular: angle,
+            angular: angle_shaped,
         }
     }
 }
@@ -153,7 +143,7 @@ mod tests {
         assert_eq!(expert(&b).angular, PI / 6.0);
     }
 
-    // ふさがっているときにargmaxの向きへ回ると、argmaxの向きと固定の浅海の向きが食い違って往復す
+    // ふさがっているときにargmaxの向きへ回ると、argmaxの向きと固定の回転の向きが食い違って振動して止まってしまう
     // そのため、回転を一方向に固定する
     #[test]
     fn test_turn_left_when_blocked() {
