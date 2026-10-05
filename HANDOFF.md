@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-10-04
+最終更新: 2026-10-05
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -83,7 +83,7 @@
 
 **TODO**: 先行研究との差分を1枚の表にして、レポートの工夫点の核にする（W4〜W5）
 
-## 3. 現在の状態（2026-10-04）
+## 3. 現在の状態（2026-10-05）
 
 - 初回コミット済み: `crates/policy`（no_std、仮のルールベース`expert()`）と`crates/robot_nodes`（`policy_node`）
 - `policy_node`: `/scan`の生の360本を`policy::preprocess_beams()`で24本にして`expert()`に渡し、`/cmd_vel`（`geometry_msgs/Twist`）に出す。
@@ -119,9 +119,12 @@
 - **`expert()`を作り直した**（2026-10-04、`202797c`）: 窓の最小値によるargmax（greedy）＋前方の距離に応じた滑らかな減速＋塞がったら固定の向きで旋回。8の字の部屋を詰まらずに走る。詳細は6章の5
 - **`expert()`を片付けた**（2026-10-04、`dcad969`・`e768bc4`・`ce755e7`）: 窓の最小値の計算を1回に（`min_values`の添字＝`target_beams`の番号）、
   同点は`TIE_EPS`（0.01m）以内なら正面に近い方、`target_beams`を`%`で回して作る（`FRONT_BEAMS_LEN`）、clampを使う、`-inf`/`NaN`の条件をまとめた。`test_eps`を追加し、`cargo test -p policy`は6件通過。詳細は6章の5
-- **デモの記録と書き出しができた**（2026-10-04、元のPC、**未コミット**: `scripts/data_reshape.py`・`pixi.toml`/`pixi.lock`（`mcap`・`pandas`を追加）・`.gitignore`（`/bags`））。
+- **デモの記録と書き出しができた**（2026-10-04、元のPC、`232d3d2`でコミット済み: `scripts/data_reshape.py`・`pixi.toml`/`pixi.lock`（`mcap`・`pandas`を追加）・`.gitignore`（`/bags`））。
   生の`/scan`と`/cmd_vel`を`ros2 bag record`で`bags/<run>/`に記録し、`data_reshape.py`でCSVにする。`bags/run_01`（71秒、712組）、`bags/run02`（16秒、160組）。詳細は6章の5
   - **bagとCSVはgitに入らない**（`/bags`）。サブPCには無いので、記録し直すかコピーする（4章「サブPCで作業を再開する手順」）
+  - 2026-10-05に記録した`bags/test01`（`/scan` 265行、`/cmd_vel` 266行）が手元にある
+- **CSVをRustで読めるようになった**（2026-10-05、`5efeb3d`・`b41023d`）: `robot_nodes`のbin `read_data`（`crates/robot_nodes/src/bin/read_data.rs`、`csv`クレートを追加）。
+  `pixi run cargo run --bin read_data -- bags/<run名>`（**プロジェクト直下で**実行）で、2つのCSVを`Vec<CmdVel>`と`Vec<Scan>`に読み込む。照合はまだ。詳細は6章の5
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -209,7 +212,7 @@ cargo build && cargo test -p policy
 | W4 10/19–25 | S3（事故の主張）、シナリオB/C、検証結果の可視化（✅/❌） |
 | W5 10/26–11/1 | 動画・レポート・README仕上げ、提出 |
 
-## 6. 次にやること（W1は完了、W2の準備中。次は5の「Rustでラベルを作る」）
+## 6. 次にやること（W1は完了、W2の準備中。次は5の「Rustでラベルを作る」の照合）
 
 0. 環境をpixiに統一する（4章。ユーザーが実施）
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
@@ -374,9 +377,19 @@ cargo build && cargo test -p policy
      - 気づき（学習の設計で使う）: `angular_z`は0.0／0.262／0.524／0.785／0.8／−0.8の**飛び飛びの値**（13方向のargmax＋`W_MAX`で切るため）。MLPを回帰にするか13方向の分類にするかを決める
      - 確かめておくこと: bagの`Duration`は実時間。GUIありはRTF約70%なので実時間では約7Hzになるはず。S3で反応時間や停止距離を判定するときは`header.stamp`（シミュレーション時刻）を使う。RTFは`gz topic -e -t /stats`の`real_time_factor`
    - ⬜ **次はここから: Rustでラベルを作る＋S2の予行**
-     1. 未コミットの4つ（`scripts/data_reshape.py`、`pixi.toml`/`pixi.lock`、`.gitignore`）と`HANDOFF.md`をコミットしてpush
-     2. 置き場所を決める（新しいcrate〔学習用のBurnのcrateと兼ねる〕か、`robot_nodes`の`bin`か。`policy`は`no_std`なので入れない）
-     3. 2つのCSVを読み、各スキャンを`preprocess_beams()`→`expert()`に通す。`log_time`で「スキャンの直後に来た`/cmd_vel`」と対応させ、一致するか比べる（`f32`→`f64`の広げ方の端数に注意）
+     1. ✅ 未コミットの4つと`HANDOFF.md`をコミットしてpush（`232d3d2`）
+     2. ✅ 置き場所は**`robot_nodes`のbin `read_data`**にした（2026-10-05）。`policy`は`no_std`なので入れない。Burnの学習用crateは別に作る
+     3. **（作業中）** 2つのCSVを読み、各スキャンを`preprocess_beams()`→`expert()`に通し、`log_time`で「スキャンの直後に来た`/cmd_vel`」と対応させ、一致するか比べる
+        - ✅ 読み込み（2026-10-05、`b41023d`）: `CmdVel { time: u64, linear_x: f64, angular_z: f64 }`（0・1・6列目）、`Scan { time_stamp: u64, log_time: u64, ranges: Vec<f32> }`（`record.iter().skip(2).map(parse::<f32>)`で360本）
+        - ⬜ 各`Scan`の`ranges`を`preprocess_beams(&scan.ranges)`→`expert()`に通す
+        - ⬜ `log_time`で直後の`CmdVel`を探して比べる。`expert()`の`f32`を`as f64`で広げれば、ノードと同じ値になり`==`で比べられるはず。一致しない件数を数える
+        - ⬜ 行数が1つ違う（`test01`は`/cmd_vel`が266行、`/scan`が265行）。記録の開始・終了のタイミングによる端の分と思われる。対応の取れない行の扱いを決める
+        - 残りの警告: 未使用の`use`（`Action`など、照合を書けば消える）、`use csv;`は不要、フィールド名の省略記法（任意）
+        - **学び**: binのファイルでは`crate::`はそのbin自身を指す。依存している別のcrateは`use policy::...`のようにcrate名で使う（`mod`は自分のcrateにファイルを取り込む宣言）
+        - **学び**: ワークスペースの直下での`cargo add`は`-p robot_nodes`で追加先を指定する
+        - **学び**: `Path::join`に`/`で始まる文字列を渡すと絶対パスとして扱われ、元のパスが捨てられる（Pythonと同じ落とし穴）。相対パスの引数は、起動したディレクトリを基準に解決される
+        - **学び**: `log_time`（19桁のns）は`u64`で読む（`f32`だと桁が落ちる）。`Twist`の中身は`f64`
+        - **学び**: `for`の中に置いた`println!("{:?}", v.last())`は、毎回「今pushした要素」を表示する（`}`の位置に注意。`cargo fmt`で構造を見える形にする）
      4. デモを本格的に集める（数分〜十数分。開始位置・向きを変える）
    - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討
 
