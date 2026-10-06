@@ -3,7 +3,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-const MAX_GAP_NS: u64 = 10_000_000; // scan-> cmd_vel gap: 10ms
+const MAX_GAP_NS: u64 = 20_000_000; // scan-> cmd_vel gap: 20ms
 
 #[derive(Debug)]
 pub struct CmdVel {
@@ -64,7 +64,8 @@ fn main() {
     for scan in scans.iter() {
         if let Some(cmd) = cmd_vels
             .iter()
-            .find(|c| c.log_time > scan.log_time && c.log_time - scan.log_time < MAX_GAP_NS)
+            .min_by_key(|c| c.log_time.abs_diff(scan.log_time))
+            .filter(|c| c.log_time.abs_diff(scan.log_time) <= MAX_GAP_NS)
         {
             let action = expert(&preprocess_beams(&scan.ranges).unwrap());
             if action.linear as f64 != cmd.linear_x || action.angular as f64 != cmd.angular_z {
@@ -75,7 +76,7 @@ fn main() {
                     action.angular as f64,
                     cmd.linear_x,
                     cmd.angular_z,
-                    cmd.log_time - scan.log_time
+                    cmd.log_time.abs_diff(scan.log_time)
                 );
             } else {
                 matched_count += 1;
@@ -84,9 +85,15 @@ fn main() {
             no_action_count += 1;
         }
     }
-    println!("total length: {:?}, matched: {:?}, unmatched: {:?}, no_action: {:?}", scans.len(), matched_count, unmatched_count, no_action_count);
+    println!(
+        "total length: {:?}, matched: {:?}, unmatched: {:?}, no_action: {:?}",
+        scans.len(),
+        matched_count,
+        unmatched_count,
+        no_action_count
+    );
     if unmatched_count > 0 {
-        eprint!("unmatched count is greater than 0, exiting with error code 1");
+        eprintln!("unmatched count is greater than 0, exiting with error code 1");
         std::process::exit(1);
     }
 }
