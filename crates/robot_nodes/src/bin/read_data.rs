@@ -1,4 +1,3 @@
-use csv;
 use policy::{expert, preprocess_beams};
 use std::env;
 use std::fs;
@@ -8,7 +7,7 @@ const MAX_GAP_NS: u64 = 10_000_000; // scan-> cmd_vel gap: 10ms
 
 #[derive(Debug)]
 pub struct CmdVel {
-    pub time: u64,
+    pub log_time: u64,
     pub linear_x: f64,
     pub angular_z: f64,
 }
@@ -19,7 +18,7 @@ pub struct Scan {
     pub ranges: Vec<f32>,
 }
 
-pub fn main() {
+fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: {} <path_to_scan_data>", args[0]);
@@ -37,7 +36,7 @@ pub fn main() {
         let lin_x: f64 = record[1].parse().unwrap();
         let ang_z: f64 = record[6].parse().unwrap();
         cmd_vels.push(CmdVel {
-            time: time,
+            log_time: time,
             linear_x: lin_x,
             angular_z: ang_z,
         });
@@ -65,11 +64,19 @@ pub fn main() {
     for scan in scans.iter() {
         if let Some(cmd) = cmd_vels
             .iter()
-            .find(|c| c.time > scan.log_time && c.time - scan.log_time < MAX_GAP_NS)
+            .find(|c| c.log_time > scan.log_time && c.log_time - scan.log_time < MAX_GAP_NS)
         {
             let action = expert(&preprocess_beams(&scan.ranges).unwrap());
             if action.linear as f64 != cmd.linear_x || action.angular as f64 != cmd.angular_z {
                 unmatched_count += 1;
+                eprintln!("Unmatched:log_time: {}, action_linear: {}, action_angular: {}, cmd_linear: {}, cmd_angular: {}, gap: {} ns", 
+                    scan.log_time,
+                    action.linear as f64,
+                    action.angular as f64,
+                    cmd.linear_x,
+                    cmd.angular_z,
+                    cmd.log_time - scan.log_time
+                );
             } else {
                 matched_count += 1;
             }
@@ -77,7 +84,9 @@ pub fn main() {
             no_action_count += 1;
         }
     }
-    println!("matched_count: {:?}", matched_count);
-    println!("no_action_count: {:?}", no_action_count);
-    println!("unmatched_count: {:?}", unmatched_count);
+    println!("total length: {:?}, matched: {:?}, unmatched: {:?}, no_action: {:?}", scans.len(), matched_count, unmatched_count, no_action_count);
+    if unmatched_count > 0 {
+        eprint!("unmatched count is greater than 0, exiting with error code 1");
+        std::process::exit(1);
+    }
 }
