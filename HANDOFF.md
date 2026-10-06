@@ -125,8 +125,10 @@
   - 2026-10-05に記録した`bags/test01`（`/scan` 265行、`/cmd_vel` 266行）が手元にある
 - **CSVをRustで読めるようになった**（2026-10-05、`5efeb3d`・`b41023d`）: `robot_nodes`のbin `read_data`（`crates/robot_nodes/src/bin/read_data.rs`、`csv`クレートを追加）。
   `pixi run cargo run --bin read_data -- bags/<run名>`（**プロジェクト直下で**実行）で、2つのCSVを`Vec<CmdVel>`と`Vec<Scan>`に読み込む。詳細は6章の5
-- **S2の予行に成功**（2026-10-06、`read_data`の照合は**未コミット**）: `bags/test01`の265スキャンすべてで、オフラインで再計算した`preprocess_beams()`→`expert()`の行動が、
+- **S2の予行に成功**（2026-10-06、`3277236`・`4c9c8e5`）: `bags/test01`の265スキャンすべてで、オフラインで再計算した`preprocess_beams()`→`expert()`の行動が、
   記録された`/cmd_vel`と**ビット単位で一致**（不一致0、対応なし0）。ノードが実際に出した行動を、同じ`policy`のコードをノードの外で動かして再現できた＝guestで同じことをする前提が確かめられた
+- **デモの本格的な収集を開始**（2026-10-06）: gzの`/world/diff_drive/set_pose`サービスで開始位置・向きを変えて記録する。`bags/demo_01`（`/scan`・`/cmd_vel`各571件）は
+  不一致0・**対応なし4件**。原因は照合の時刻の扱い（`MAX_GAP_NS`が狭い＋`log_time`の順番の入れ替わり）で、ノードの問題ではない。照合の条件を直すところ（6章の5-4）
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -214,7 +216,7 @@ cargo build && cargo test -p policy
 | W4 10/19–25 | S3（事故の主張）、シナリオB/C、検証結果の可視化（✅/❌） |
 | W5 10/26–11/1 | 動画・レポート・README仕上げ、提出 |
 
-## 6. 次にやること（W1は完了、W2の準備中。次は5の「Rustでラベルを作る」の仕上げとデモ収集）
+## 6. 次にやること（W2。次は5-4「デモの収集」: 照合の条件を直してから本格的に集める）
 
 0. 環境をpixiに統一する（4章。ユーザーが実施）
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
@@ -387,10 +389,12 @@ cargo build && cargo test -p policy
         - ✅ `log_time`で直後の`CmdVel`を探して比べる（2026-10-06）: `cmd_vels.iter().find(|c| c.time > scan.log_time && c.time - scan.log_time < MAX_GAP_NS)`、
           `action.linear as f64 != cmd.linear_x || action.angular as f64 != cmd.angular_z`で不一致を数える。**test01で不一致0・対応なし0**
           - `MAX_GAP_NS`は10ms。実測でscan→cmd_velの差は0.2〜0.8ms（中央値0.5ms）。スキャンの間隔は実時間で最短35ms・中央値100ms・最長136msと揺れるので、100msだと指令が欠けたときに次のスキャンへの指令を拾いうる
+          - **10msは狭すぎた**（demo_01で判明、5-4を参照）。「直後」ではなく「±20ms以内で一番近い」に直す
           - **添字（`scan[i]`と`cmd_vel[i]`）で対応させない**。test01は最初の`/cmd_vel`が最初の`/scan`より約100ms早い（記録開始前のスキャンへの指令）ので、`scan[0]`↔`cmd_vel[1]`。直進が続く間は1つずれても値が同じで、間違いに気づけない
         - ✅ 行数が1つ違う（`test01`は`/cmd_vel`が266行、`/scan`が265行）のは先頭の余分な`/cmd_vel`。時刻で対応させるので、余った`/cmd_vel`は自然に使われない。scan側で対応が無いものは`no_action_count`で数える
-        - ⬜ 仕上げ: 比較数・一致数も表示する（「不一致0」がループ0回と区別できるように）、不一致のときに`log_time`と両方の値を表示する、
-          比べる値をわざとずらして`unmatched_count`が0でなくなることを一度確かめる（シナリオCの予行）、`else`の`continue;`と`};`の`;`と`use csv;`を消す、`cargo fmt`、コミット
+        - ✅ 仕上げ（2026-10-06、`4c9c8e5`）: `total length / matched / unmatched / no_action`を表示、不一致は`eprintln!`で`log_time`・両方の値・時刻差を表示し、1件でもあれば`exit(1)`。
+          `CmdVel.time`→`log_time`に改名。**値をわざとずらして不一致を検出できることを確認済み**（シナリオCの予行）
+          - 残り（任意）: 最後の`eprint!`→`eprintln!`、`cargo fmt`（長い行を足したあと未適用）、フィールドの省略記法
         - **学び**: binのファイルでは`crate::`はそのbin自身を指す。依存している別のcrateは`use policy::...`のようにcrate名で使う（`mod`は自分のcrateにファイルを取り込む宣言）
         - **学び**: ワークスペースの直下での`cargo add`は`-p robot_nodes`で追加先を指定する
         - **学び**: `Path::join`に`/`で始まる文字列を渡すと絶対パスとして扱われ、元のパスが捨てられる（Pythonと同じ落とし穴）。相対パスの引数は、起動したディレクトリを基準に解決される
@@ -399,7 +403,32 @@ cargo build && cargo test -p policy
         - **学び**: 時刻はすべてns。`log_time`は実時間（UNIX時刻）、`header_stamp`はシミュレーション時刻。scanとcmd_velは`log_time`どうしで比べる
         - **学び**: 比べるときは**狭い型を広げる**（`f32`→`f64`は値が変わらない。`f64`→`f32`は丸めで差が消えうる）。記録側（`Twist`の`f64`＝実際に送った指令）を丸めず、`expert()`側を`as f64`で広げる＝ノードと同じ変換
         - **学び**: `a > b && a - b < GAP`は、`&&`が左で止まるので`u64`の引き算のアンダーフローを避けられる
-     4. デモを本格的に集める（数分〜十数分。開始位置・向きを変える）。集めたら全runに照合を流して一致を確かめる
+        - **学び**: `log_time`は**bagの記録プロセスが各トピックを受け取った時刻**で、ノードが送った順ではない。`/scan`と`/cmd_vel`は別々に受け取るので、ほぼ同時だと順番が入れ替わる（demo_01で0.035ms逆転）。「だいたいの時刻」には使えるが、因果の順番の証拠にはならない
+     4. **（作業中）** デモを本格的に集める（数分〜十数分。開始位置・向きを変える）。集めたら全runに照合を流して一致を確かめる
+        - 狙い: test01は`angular_z`=0が48%（126/265）、`linear_x`=0.2（全速）が85%（225/265）で、旋回・減速の場面が少ない。**旋回・減速を増やす**ため、短いrun（1〜2分）を開始位置・向きを変えて8〜10本（計10分前後、約6000件）。壁に向いた位置や角の近くからも始める
+        - 置き直し: Gazebo起動中に
+          `pixi run gz service -s /world/diff_drive/set_pose --reqtype gz.msgs.Pose --reptype gz.msgs.Boolean --timeout 1000 --req 'name: "vehicle_blue", position: {x: 1.45, y: 2.0, z: 0.0}, orientation: {z: 0.7071, w: 0.7071}'`
+          - ワールドに`gz-sim-user-commands-system`があるので使える。ワールド名はSDFの`<world name="diff_drive">`。`pixi run gz service -l | grep set_pose`で確認（**Gazeboが起動していないと何も出ない**）
+          - 向きはクォータニオン: yaw θなら`z = sin(θ/2)`、`w = cos(θ/2)`（+x: `{w: 1}`、+y: `{z: 0.7071, w: 0.7071}`、−x: `{z: 1, w: 0}`）
+        - 開始位置の候補: 中央(0, 2)、右の通路(1.45, 2)、左の通路(−1.45, 2)、下の通路(±0.5, 0.55)、上の通路(±0.5, 3.45)、壁の手前(0.6, 2)+x向き（wall_1まで0.4m、減速用）
+        - 手順: 置き直す → `pixi run ros2 bag record -o bags/<run名> --topics /scan /cmd_vel` → 1〜2分で`Ctrl+C` →
+          **`pixi run ros2 bag info bags/<run名>`で`/scan`と`/cmd_vel`が両方ほぼ同数あることを確認** → `data_reshape.py` → `read_data`
+        - 記録した開始位置（run名と一緒にここに追記する）:
+
+          | run | 開始位置 (x, y) | 向き | 長さ | 件数 | 照合 |
+          |---|---|---|---|---|---|
+          | demo_01 | （要記入） | （要記入） | 約90秒 | 571 | 一致567・不一致0・対応なし4 |
+
+        - **demo_01の対応なし4件の正体**（2026-10-06に調査）
+          - 3件（scan 178・292・501）: 直後のcmdまで10.1〜11.2ms。`MAX_GAP_NS`（10ms）をわずかに超えただけ（直前のcmdは125ms以上前で取り違えの心配なし）。差の中央値は0.57msだが、負荷で5〜11msまで延びる
+          - 1件（scan 81）: **cmdがscanより0.035ms早く記録された**。直後のcmdは次のスキャンへの応答（127ms後）で、10msの制限で正しく除外された
+          - demo_01は最初のcmdが最初のscanの0.66ms後（`scan[0]`↔`cmd[0]`）。test01（`cmd[1]`）と違い、添字で対応させない判断の裏付け
+        - ⬜ **次はここから: 照合の条件を直す**: 「後で最初のcmd」→「**時刻の差の絶対値が一番小さいcmdを±20ms以内から選ぶ**」。
+          20msの理由: 実測の差は最大約11ms、スキャンの間隔は最短35msなので、その半分より小さければ隣の組を拾わない。`u64::abs_diff`、`min_by_key`を使う。demo_01が`matched: 571`になるか確認
+        - **W3への要件（blackbox）**: 時刻から組を推測するのは根本の弱点。S1/S2は「この観測→この行動」の組をコミットするので、**組はノードの中で確定させる**
+          （例: `policy_node`が行動に元のスキャンの`header.stamp`を付けて記録する）。`blackbox_node`の設計で決める
+        - **学び**: `ros2 bag record`は存在しないトピック名を指定してもエラーにならず、現れるのを待ち続ける（demo_01の1回目は`/cmd_vel`しか入らず、`data_scan.csv`が1バイトになった）。記録後に`ros2 bag info`で確かめる
+        - **学び**: `Path(...).glob()`は、フォルダが無くてもエラーにならず空を返す（`demo01`と`demo_01`の打ち間違いで「fileが1個ではありません」）。`is_dir()`で先に確かめるか、メッセージに件数を入れる
      5. 学習用の出力の形を決める: 先に「回帰か13方向の分類か」を決め、`read_data`から「24本のbeams＋`expert()`の行動」のCSVを書き出すか、Burnのcrateで直接読むかを選ぶ
    - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討
 
