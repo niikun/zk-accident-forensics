@@ -128,12 +128,12 @@
 - **S2の予行に成功**（2026-10-06、`3277236`・`4c9c8e5`）: `bags/test01`の265スキャンすべてで、オフラインで再計算した`preprocess_beams()`→`expert()`の行動が、
   記録された`/cmd_vel`と**ビット単位で一致**（不一致0、対応なし0）。ノードが実際に出した行動を、同じ`policy`のコードをノードの外で動かして再現できた＝guestで同じことをする前提が確かめられた
 - **デモの本格的な収集を開始**（2026-10-06）: gzの`/world/diff_drive/set_pose`サービスで開始位置・向きを変えて記録する。`bags/demo_01`（`/scan`・`/cmd_vel`各571件）は
-  不一致0・**対応なし4件**。原因は照合の時刻の扱い（`MAX_GAP_NS`が狭い＋`log_time`の順番の入れ替わり）で、ノードの問題ではない。**照合の条件を直した**（2026-10-07、サブPC、未コミット）: ±20ms以内で時刻の差が一番小さいcmdを選ぶ形にし、demo_01は`matched: 571`・test01は`matched: 265`（どちらも対応なし0）。rec01〜14での再確認は元のPCで（6章の5-4）
+  不一致0・**対応なし4件**。原因は照合の時刻の扱い（`MAX_GAP_NS`が狭い＋`log_time`の順番の入れ替わり）で、ノードの問題ではない。**照合の条件を直した**（2026-10-07、サブPC、コミット済み）: ±20ms以内で時刻の差が一番小さいcmdを選ぶ形にし、demo_01は`matched: 571`・test01は`matched: 265`（どちらも対応なし0）。rec01〜14での再確認は元のPCで（6章の5-4）
 - **デモの収集を終えた**（2026-10-06夜、**元のPC**）: `bags/rec01`〜`rec14`（14本、`/scan` 2,810件、約6分）。全runをCSVにし、`read_data`で照合して**不一致0**（対応なし33件は取りこぼし。学習には影響なし）。
   run_01・run02は削除済み。**データは元のPCにしかない**（サブPCで学習するならコピーが要る。4章「サブPCで学習を進める手順」）。詳細は6章の5-4
-- **`angular`のクラス変換を`policy`に実装した**（2026-10-07〜08）: `class_to_angular(class)`（`0d51896`）と`angular_to_class(angular)`（未コミット）。
+- **`angular`のクラス変換を`policy`に実装した**（2026-10-07〜08）: `class_to_angular(class)`（`0d51896`）と`angular_to_class(angular)`（`b3bc7b6`、10/8に修正・整理、未コミット）。どちらも`pub`（`read_data`から使う）。
   9値の表`ANGLES`（−0.8, −π/4, −π/6, −π/12, 0, π/12, π/6, π/4, 0.8）。`max_idx`→class は `clamp(max_idx−2, 0, 8)`（class 0＝`max_idx` 1・2、class 8＝10・11）。
-  `angular_to_class`は`ANGLES`を`==`で探す形（`as usize`の切り捨てを避けた）。`cargo test -p policy`は8件通過
+  `angular_to_class`は全クラスの`class_to_angular(i)`と`==`で比べる形（`as usize`の切り捨てを避けた。手書きの表`ANGLES`は削除）。`expert()`が実際に出す9値すべてで元のクラスに戻ることをテスト済み。`cargo test -p policy`は8件通過（2026-10-08）
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -496,8 +496,12 @@ cargo build && cargo test -p policy
         - **決定（2026-10-07）: `angular`は9クラス**（0.785と0.8はまとめない。expertの値をそのまま再現できる）
         - ✅ `angular`↔クラスの変換（`class_to_angular`・`angular_to_class`）を実装（2026-10-08）。学び: `angular`は向きではなく**角速度**（選んだ向きの角度を`±W_MAX`で切って使う）。クラスは多対一（`max_idx` 1・2→class 0、10・11→class 8）
         - ⬜ **次はここから**
-          1. `angular_to_class`の整理: 先頭の±0.8の`if`と範囲チェックは`ANGLES`の探索に含まれるので不要（`NaN`も`Err`になる）。
-             **テストを足す**: `expert()`が実際に出す`angular`（`max_idx` 1〜11）で`angular_to_class`が`Ok`になり、`class_to_angular`で元に戻ること（`==`比較の前提の確認）
+          1. ✅ テストを足した（2026-10-08）: `expert()`が実際に出す`angular`で`angular_to_class`が`Ok`になり、元のクラスに戻る。**これで`ANGLES`との`==`が通らないことが分かり**、比べる相手を`class_to_angular(i)`に変えて通過
+             - **学び**: 数学的に同じ値でも、`f32`は計算の順番で最後のビットが変わる。`-PI/2 + idx·2π/24`（expertの式）と`PI/12.0`（手書きの表）はclass 3・5・7で1〜2ビットずれた。**同じ値を2つの式で作らない**（1か所の関数から作る）。ノードとguestの一致、固定小数点化の動機と同じ話
+             - **学び**: 表を表自身と比べるテストは必ず通る。入力は実際の出どころ（`expert()`）から作る
+             - **学び**: `a..b`はbを含まない（`1..7`でclass 7が漏れた）。含めるなら`a..=b`。`unwrap()`で落ちると`assert_eq!`のメッセージは出ない
+             - ✅ 整理（2026-10-08）: `ANGLES`を削除、±0.8の`if`をやめて全クラス（0〜8）を探す形に、2つの関数を`pub`に。警告0、`cargo test -p policy`は8件通過
+             - 残り（小さなこと）: ループの`0..=8`は`0..NUM_ANGULAR_CLASSES`に（定数を変えたときに漏れないように）。先頭の範囲チェックは探索に含まれるので消してよい（`NaN`も探索で`Err`になる）。`cargo fmt`、コミット
           2. **モード判定**（全速/減速/停止＝`front_min`と`D_SLOW`/`D_STOP`）を`expert()`と共通の関数にする。停止のとき`angular`は0.8固定でclass 8と衝突するので、モードを先に決め、停止サンプルは`angular`の損失を掛けない
           3. `read_data`に中間CSV（24本のbeams＋`angular`のクラス番号＋モード＋`linear`）の書き出しを足す（ラベルは`preprocess_beams()`→`expert()`の再計算から。まず`bags/demo_01`・`test01`で確認 → クラス分布を出力）
           4. Burnの学習用crateを作る
