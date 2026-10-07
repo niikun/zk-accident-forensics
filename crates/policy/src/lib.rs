@@ -1,7 +1,7 @@
 //! LiDAR観測 → 速度指令の方策。ロボットのノードとSP1 guestで同一コードを共有する。
 #![no_std]
 
-use core::f32::consts::PI;
+use core::{f32::consts::PI, fmt::Error};
 
 /// 方策に入力するLiDARビーム数（/scanをダウンサンプルした値）
 pub const NUM_BEAMS: usize = 24;
@@ -10,8 +10,8 @@ const RANGES_PER_BEAM: usize = NUM_RANGES_RAW / NUM_BEAMS;
 /// RANGEを有限に限定するため、10.0で設定。sdfのLiDAR設定と揃える
 pub const RANGE_MAX: f32 = 10.0;
 const FRONT_BEAMS_LEN: usize = NUM_BEAMS / 2 + 1;
-/// 最大速度
-const VMAX: f32 = 0.2;
+/// 最大の前進速度(m/s)
+pub const VMAX: f32 = 0.2;
 /// 衝突を避けるためにこの距離になったら、速度を落とす
 const D_SLOW: f32 = 0.5;
 /// 衝突を避けるためにこの距離になったら、止まる
@@ -20,9 +20,11 @@ const D_STOP: f32 = 0.25;
 /// ストップより短めに設定しないとD_STOPに到達せず停滞するため設定
 const D_TARGET: f32 = D_STOP - 0.05;
 /// 角度の上限（rad）と、塞がったときの旋回の角速度（rad/s）
-const W_MAX: f32 = 0.8;
+pub const W_MAX: f32 = 0.8;
 /// 挙動を安定させるため、距離がほぼ同じ場合、差がこれ未満なら同点とみなす
 const TIE_EPS: f32 = 0.01;
+/// 回転の9クラス
+pub const NUM_ANGULAR_CLASSES: usize = 9;
 
 /// 速度指令（固定小数点化は学習後に置き換える）
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -126,6 +128,15 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
             angular: angle_shaped,
         }
     }
+}
+
+fn class_to_angular(class: usize) -> Result<f32,Error> {
+    if class >= NUM_ANGULAR_CLASSES {
+        return Err(Error);
+    }
+    let angle = -PI / 2.0 + (class+2) as f32 * 2.0 * PI / NUM_BEAMS as f32;
+    let angle_shaped = angle.clamp(-W_MAX, W_MAX);
+    Ok(angle_shaped)
 }
 
 #[cfg(test)]
@@ -248,5 +259,17 @@ mod tests {
         beams[3] = 3.0;
         assert_eq!(expert(&beams).linear, VMAX);
         assert_eq!(expert(&beams).angular, 0.0);
+   }
+
+    #[test]
+    fn test_class_to_angular() {
+        for k in 0..NUM_ANGULAR_CLASSES {
+            let mut beams = [1.0;24];
+            let idx = (18 + k+2) % NUM_BEAMS;
+            beams[(NUM_BEAMS + idx-1)%NUM_BEAMS] = 5.0;
+            beams[(NUM_BEAMS + idx)%NUM_BEAMS] = 5.0;
+            beams[(NUM_BEAMS + idx+1)%NUM_BEAMS] = 5.0;
+            assert_eq!(expert(&beams).angular, class_to_angular(k).unwrap(),"k = {}", k);
+        }
     }
 }
