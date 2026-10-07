@@ -26,6 +26,8 @@ const TIE_EPS: f32 = 0.01;
 /// 回転の9クラス
 pub const NUM_ANGULAR_CLASSES: usize = 9;
 
+const ANGLES:[f32;9] = [-0.8, -PI/4.0, -PI/6.0, -PI/12.0, 0.0, PI/12.0, PI/6.0,PI/4.0, 0.8];
+
 /// 速度指令（固定小数点化は学習後に置き換える）
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Action {
@@ -137,6 +139,20 @@ fn class_to_angular(class: usize) -> Result<f32,Error> {
     let angle = -PI / 2.0 + (class+2) as f32 * 2.0 * PI / NUM_BEAMS as f32;
     let angle_shaped = angle.clamp(-W_MAX, W_MAX);
     Ok(angle_shaped)
+}
+
+fn angular_to_class(angular:f32) -> Result<usize, Error> {
+    if angular > 0.8 || angular < -0.8 {
+        return Err(Error)
+    }
+    if angular == - 0.8 {
+        Ok(0) 
+    } else if angular == 0.8 {
+        Ok(8)
+    } else {
+        let class = (angular + PI/2.0) * 12.0 / PI - 2.0;
+        Ok(class as usize)
+    }
 }
 
 #[cfg(test)]
@@ -271,5 +287,14 @@ mod tests {
             beams[(NUM_BEAMS + idx+1)%NUM_BEAMS] = 5.0;
             assert_eq!(expert(&beams).angular, class_to_angular(k).unwrap(),"k = {}", k);
         }
+    }
+
+    #[test]
+    fn test_angular_to_class() {
+        for (i, angle) in ANGLES.iter().enumerate() {
+            let class = angular_to_class(*angle).unwrap();
+            assert_eq!(class, i);
+        }
+
     }
 }
