@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-10-07
+最終更新: 2026-10-08
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -131,6 +131,9 @@
   不一致0・**対応なし4件**。原因は照合の時刻の扱い（`MAX_GAP_NS`が狭い＋`log_time`の順番の入れ替わり）で、ノードの問題ではない。**照合の条件を直した**（2026-10-07、サブPC、未コミット）: ±20ms以内で時刻の差が一番小さいcmdを選ぶ形にし、demo_01は`matched: 571`・test01は`matched: 265`（どちらも対応なし0）。rec01〜14での再確認は元のPCで（6章の5-4）
 - **デモの収集を終えた**（2026-10-06夜、**元のPC**）: `bags/rec01`〜`rec14`（14本、`/scan` 2,810件、約6分）。全runをCSVにし、`read_data`で照合して**不一致0**（対応なし33件は取りこぼし。学習には影響なし）。
   run_01・run02は削除済み。**データは元のPCにしかない**（サブPCで学習するならコピーが要る。4章「サブPCで学習を進める手順」）。詳細は6章の5-4
+- **`angular`のクラス変換を`policy`に実装した**（2026-10-07〜08）: `class_to_angular(class)`（`0d51896`）と`angular_to_class(angular)`（未コミット）。
+  9値の表`ANGLES`（−0.8, −π/4, −π/6, −π/12, 0, π/12, π/6, π/4, 0.8）。`max_idx`→class は `clamp(max_idx−2, 0, 8)`（class 0＝`max_idx` 1・2、class 8＝10・11）。
+  `angular_to_class`は`ANGLES`を`==`で探す形（`as usize`の切り捨てを避けた）。`cargo test -p policy`は8件通過
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -491,7 +494,13 @@ cargo build && cargo test -p policy
           損失は`CE(angular)+CE(モード)+λ·MSE`、モードに重み（停止3.4%）。評価は停止クラスの再現率
         - 提案中（未決）: ラベルは記録の`/cmd_vel`ではなく`preprocess_beams()`→`expert()`の再計算から作る。`read_data`が「24本＋ラベル」の中間CSVを書き出し、Burnのcrate（ROS非依存）はそれを読む。正規化`beams / RANGE_MAX`は`policy`に置く
         - **決定（2026-10-07）: `angular`は9クラス**（0.785と0.8はまとめない。expertの値をそのまま再現できる）
-        - ⬜ **次はここから**: `read_data`に中間CSV（24本のbeams＋`angular`のクラス番号＋モード＋`linear`）の書き出しを足す → Burnの学習用crateを作る
+        - ✅ `angular`↔クラスの変換（`class_to_angular`・`angular_to_class`）を実装（2026-10-08）。学び: `angular`は向きではなく**角速度**（選んだ向きの角度を`±W_MAX`で切って使う）。クラスは多対一（`max_idx` 1・2→class 0、10・11→class 8）
+        - ⬜ **次はここから**
+          1. `angular_to_class`の整理: 先頭の±0.8の`if`と範囲チェックは`ANGLES`の探索に含まれるので不要（`NaN`も`Err`になる）。
+             **テストを足す**: `expert()`が実際に出す`angular`（`max_idx` 1〜11）で`angular_to_class`が`Ok`になり、`class_to_angular`で元に戻ること（`==`比較の前提の確認）
+          2. **モード判定**（全速/減速/停止＝`front_min`と`D_SLOW`/`D_STOP`）を`expert()`と共通の関数にする。停止のとき`angular`は0.8固定でclass 8と衝突するので、モードを先に決め、停止サンプルは`angular`の損失を掛けない
+          3. `read_data`に中間CSV（24本のbeams＋`angular`のクラス番号＋モード＋`linear`）の書き出しを足す（ラベルは`preprocess_beams()`→`expert()`の再計算から。まず`bags/demo_01`・`test01`で確認 → クラス分布を出力）
+          4. Burnの学習用crateを作る
    - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討
 
 ### SDF作りのメモ

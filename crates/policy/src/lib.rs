@@ -150,8 +150,12 @@ fn angular_to_class(angular:f32) -> Result<usize, Error> {
     } else if angular == 0.8 {
         Ok(8)
     } else {
-        let class = (angular + PI/2.0) * 12.0 / PI - 2.0;
-        Ok(class as usize)
+        for (i, angle) in ANGLES.iter().enumerate(){
+            if angle == &angular {
+                return Ok(i);
+            }
+        }
+        Err(Error)
     }
 }
 
