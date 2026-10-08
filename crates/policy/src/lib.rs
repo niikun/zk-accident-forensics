@@ -33,6 +33,14 @@ pub struct Action {
     pub angular: f32,
 }
 
+/// Speedのmode3タイプで分類
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SpeedMode {
+    Max,
+    Slow,
+    Stop,
+}
+
 /// 入力の並び（ranges[0]が正面、左回り、1度刻み、360本)
 /// RANGE_MAXは10.0で設定。front は353度～7度までで設定
 /// 置き換えの規則（+inf→RANGE_MAX、-inf→0、NaN→0、区間の最小値）
@@ -72,11 +80,8 @@ pub fn preprocess_beams(beams_raw: &[f32]) -> Result<[f32; NUM_BEAMS], &'static 
 /// 進行方向の障害物までの距離が、D_SLOWより大きければVMAX,それ以下なら段階的に減速し、D_STOP未満で、その場で左に旋回する
 pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
     // 前方‐90°~+90°のbeamを集約。angularの計算に使用
-    let mut target_beams = [0.0; FRONT_BEAMS_LEN];
-    for i in 0..FRONT_BEAMS_LEN {
-        let idx = (NUM_BEAMS - FRONT_BEAMS_LEN / 2 + i) % NUM_BEAMS;
-        target_beams[i] = beams[idx];
-    }
+    let target_beams = choose_target_beams(beams);
+
     // 現在前方に近い順番に抽出するために設定。argmaxの際、現在の前方に近い方を選べるように設定
     let index_array = [6, 7, 5, 8, 4, 9, 3, 10, 2, 11, 1];
     let mut max_value = 0.0f32;
@@ -104,32 +109,55 @@ pub fn expert(beams: &[f32; NUM_BEAMS]) -> Action {
     let angle = -PI / 2.0 + max_idx as f32 * 2.0 * PI / NUM_BEAMS as f32;
     let angle_shaped = angle.clamp(-W_MAX, W_MAX);
     // Linearの速度を調べるために前方5つのbeamsの最小値をもとに計算
-    let mut front_min: f32 = f32::INFINITY;
+    // front_min < D_STOP && max_idxが前方(6)の場合も入れていたが、
+    // front_min < D_STOPと競合して振動して、止まってしまうため削除
+    let (mode, front_min) = beams_to_mode(&beams);
+    match mode {
+        SpeedMode::Max => Action {
+            linear: VMAX,
+            angular: angle_shaped,
+        },
+        SpeedMode::Stop => Action {
+            linear: 0.0,
+            angular: W_MAX,
+        },
+        SpeedMode::Slow => Action {
+            linear: VMAX * (front_min - D_TARGET) / (D_SLOW - D_TARGET),
+            angular: angle_shaped,
+        },
+    }
+}
+/// beamsのうちfront13本のbeamsを返す.9本に絞る前の作業に使用。
+/// Args: beams: [f32;NUMBEAMS]
+/// Returns: target_beams[f32;FRONT_BEAMS_LEN]
+fn choose_target_beams(beams: &[f32; NUM_BEAMS]) -> [f32; FRONT_BEAMS_LEN] {
+    let mut target_beams = [0.0; FRONT_BEAMS_LEN];
+    for i in 0..FRONT_BEAMS_LEN {
+        let idx = (NUM_BEAMS - FRONT_BEAMS_LEN / 2 + i) % NUM_BEAMS;
+        target_beams[i] = beams[idx];
+    }
+    target_beams
+}
+
+/// beamsから、次のlinearのmode:SpeedMode::Max,Slow,Stopを返す
+pub fn beams_to_mode(beams: &[f32; NUM_BEAMS]) -> (SpeedMode, f32) {
+    let target_beams = choose_target_beams(beams);
+    let mut front_min = f32::INFINITY;
     for i in 4..=8 {
-        if front_min > target_beams[i] {
+        if target_beams[i] < front_min {
             front_min = target_beams[i];
         }
     }
-    // front_min < D_STOP && max_idxが前方(6)の場合も入れていたが、
-    // front_min < D_STOPと競合して振動して、止まってしまうため削除
     if front_min >= D_SLOW {
-        Action {
-            linear: VMAX,
-            angular: angle_shaped,
-        }
+        (SpeedMode::Max, front_min)
     } else if front_min < D_STOP {
-        Action {
-            linear: 0.0,
-            angular: W_MAX,
-        }
+        (SpeedMode::Stop, front_min)
     } else {
-        Action {
-            linear: VMAX * (front_min - D_TARGET) / (D_SLOW - D_TARGET),
-            angular: angle_shaped,
-        }
+        (SpeedMode::Slow, front_min)
     }
 }
 
+/// 回転の9つのclassから角度を返す
 pub fn class_to_angular(class: usize) -> Result<f32, Error> {
     if class >= NUM_ANGULAR_CLASSES {
         return Err(Error);
@@ -139,8 +167,9 @@ pub fn class_to_angular(class: usize) -> Result<f32, Error> {
     Ok(angle_shaped)
 }
 
+/// 回転角からclass0-8を返す
 pub fn angular_to_class(angular: f32) -> Result<usize, Error> {
-    for i in 0..=NUM_ANGULAR_CLASSES {
+    for i in 0..NUM_ANGULAR_CLASSES {
         if angular == class_to_angular(i).unwrap() {
             return Ok(i);
         }
@@ -298,6 +327,21 @@ mod tests {
             let angular = expert(&beams).angular;
             let class = angular_to_class(angular).unwrap();
             assert_eq!(k, class, "k={}", k);
+        }
+    }
+    #[test]
+    fn test_beams_to_mode() {
+        let mut beams = [3.0; 24];
+        let mins = [0.5, 0.49, 0.25, 0.24];
+        let modes = [
+            SpeedMode::Max,
+            SpeedMode::Slow,
+            SpeedMode::Slow,
+            SpeedMode::Stop,
+        ];
+        for (min, mode) in mins.iter().zip(modes.iter()) {
+            beams[0] = *min;
+            assert_eq!(beams_to_mode(&beams).0, *mode, "min:{}", min);
         }
     }
 }
