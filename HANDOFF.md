@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-10-08
+最終更新: 2026-10-10
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -83,7 +83,7 @@
 
 **TODO**: 先行研究との差分を1枚の表にして、レポートの工夫点の核にする（W4〜W5）
 
-## 3. 現在の状態（2026-10-07）
+## 3. 現在の状態（2026-10-10）
 
 - 初回コミット済み: `crates/policy`（no_std、仮のルールベース`expert()`）と`crates/robot_nodes`（`policy_node`）
 - `policy_node`: `/scan`の生の360本を`policy::preprocess_beams()`で24本にして`expert()`に渡し、`/cmd_vel`（`geometry_msgs/Twist`）に出す。
@@ -131,9 +131,14 @@
   不一致0・**対応なし4件**。原因は照合の時刻の扱い（`MAX_GAP_NS`が狭い＋`log_time`の順番の入れ替わり）で、ノードの問題ではない。**照合の条件を直した**（2026-10-07、サブPC、コミット済み）: ±20ms以内で時刻の差が一番小さいcmdを選ぶ形にし、demo_01は`matched: 571`・test01は`matched: 265`（どちらも対応なし0）。rec01〜14での再確認は元のPCで（6章の5-4）
 - **デモの収集を終えた**（2026-10-06夜、**元のPC**）: `bags/rec01`〜`rec14`（14本、`/scan` 2,810件、約6分）。全runをCSVにし、`read_data`で照合して**不一致0**（対応なし33件は取りこぼし。学習には影響なし）。
   run_01・run02は削除済み。**データは元のPCにしかない**（サブPCで学習するならコピーが要る。4章「サブPCで学習を進める手順」）。詳細は6章の5-4
-- **`angular`のクラス変換を`policy`に実装した**（2026-10-07〜08）: `class_to_angular(class)`（`0d51896`）と`angular_to_class(angular)`（`b3bc7b6`、10/8に修正・整理、未コミット）。どちらも`pub`（`read_data`から使う）。
+- **`angular`のクラス変換を`policy`に実装した**（2026-10-07〜08）: `class_to_angular(class)`（`0d51896`）と`angular_to_class(angular)`（`b3bc7b6`、10/8に修正・整理、`bbaa2b6`でコミット済み）。どちらも`pub`（`read_data`から使う）。
   9値の表`ANGLES`（−0.8, −π/4, −π/6, −π/12, 0, π/12, π/6, π/4, 0.8）。`max_idx`→class は `clamp(max_idx−2, 0, 8)`（class 0＝`max_idx` 1・2、class 8＝10・11）。
   `angular_to_class`は全クラスの`class_to_angular(i)`と`==`で比べる形（`as usize`の切り捨てを避けた。手書きの表`ANGLES`は削除）。`expert()`が実際に出す9値すべてで元のクラスに戻ることをテスト済み。`cargo test -p policy`は8件通過（2026-10-08）
+- **モード判定を`policy`に共通化した**（2026-10-09、`33d5f8e`）: `pub enum SpeedMode { Max, Slow, Stop }`と`pub fn beams_to_mode(&[f32; NUM_BEAMS]) -> (SpeedMode, f32)`（モードと`front_min`）、
+  前方13本を取り出す`choose_target_beams()`（非公開）。`expert()`はこれらを使う形に変更（振る舞いは同じ）。`angular_to_class`のループの`0..=NUM_ANGULAR_CLASSES`→`0..NUM_ANGULAR_CLASSES`も修正（どのクラスにも当たらない値でclass 9の`unwrap()`がpanicしていた）。
+  `test_beams_to_mode`（0.5→Max、0.49・0.25→Slow、0.24→Stop）を追加し、`cargo test -p policy`は**9件通過**（2026-10-09）
+- **（作業中・未コミット、サブPC）`read_data`に中間CSV`<run>/data.csv`の書き出しを追加中**（2026-10-09〜10）。照合の`exit(1)`のあとで、各スキャンを`preprocess_beams()`→`expert()`→`angular_to_class()`・`beams_to_mode()`にかけ、
+  1行＝24本＋class＋mode＋linearを`csv::Writer`で書く。`main`は`Result<(), Box<dyn Error>>`に変更。**まだビルドが通らない**（6章5-5の3）
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -238,7 +243,11 @@ cargo build && cargo test -p policy
 | W4 10/19–25 | S3（事故の主張）、シナリオB/C、検証結果の可視化（✅/❌） |
 | W5 10/26–11/1 | 動画・レポート・README仕上げ、提出 |
 
-## 6. 次にやること（W2。次は5-5「学習の設計」。デモの収集は10/6に終了）
+## 6. 次にやること（W2。次は5-5の3「中間CSVの書き出し」のビルドを通す。デモの収集は10/6に終了）
+
+> **スケジュールの注意（2026-10-09）**: W2の残り（学習・固定小数点化・走行・動画）は10/11までには厳しい。まず**浮動小数点のMLPで走って動画を撮る**（合格ラインの確保）を優先し、固定小数点化はW3の頭に回す案（未決、ユーザーが判断）
+>
+> **元のPCに移るとき（2026-10-10）**: サブPCの`read_data.rs`の変更は**未コミット**（ビルドが通らない途中の状態）。サブPCでコミットしてpushし（途中でも可、メッセージに`WIP`など）、元のPCで`git pull`してから続ける。元のPCにはrec01〜14のデータがあるので、ビルドが通ったら全runで`data.csv`を作れる
 
 0. 環境をpixiに統一する（4章。ユーザーが実施）
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
@@ -501,9 +510,16 @@ cargo build && cargo test -p policy
              - **学び**: 表を表自身と比べるテストは必ず通る。入力は実際の出どころ（`expert()`）から作る
              - **学び**: `a..b`はbを含まない（`1..7`でclass 7が漏れた）。含めるなら`a..=b`。`unwrap()`で落ちると`assert_eq!`のメッセージは出ない
              - ✅ 整理（2026-10-08）: `ANGLES`を削除、±0.8の`if`をやめて全クラス（0〜8）を探す形に、2つの関数を`pub`に。警告0、`cargo test -p policy`は8件通過
-             - 残り（小さなこと）: ループの`0..=8`は`0..NUM_ANGULAR_CLASSES`に（定数を変えたときに漏れないように）。先頭の範囲チェックは探索に含まれるので消してよい（`NaN`も探索で`Err`になる）。`cargo fmt`、コミット
-          2. **モード判定**（全速/減速/停止＝`front_min`と`D_SLOW`/`D_STOP`）を`expert()`と共通の関数にする。停止のとき`angular`は0.8固定でclass 8と衝突するので、モードを先に決め、停止サンプルは`angular`の損失を掛けない
+             - ✅ ループを`0..NUM_ANGULAR_CLASSES`に（2026-10-09、`33d5f8e`）。残り（任意）: 先頭の範囲チェックは探索に含まれるので消してよい（`NaN`も探索で`Err`になる）
+          2. ✅ **モード判定**（全速/減速/停止＝`front_min`と`D_SLOW`/`D_STOP`）を`expert()`と共通の関数にする。停止のとき`angular`は0.8固定でclass 8と衝突するので、モードを先に決め、停止サンプルは`angular`の損失を掛けない
           3. `read_data`に中間CSV（24本のbeams＋`angular`のクラス番号＋モード＋`linear`）の書き出しを足す（ラベルは`preprocess_beams()`→`expert()`の再計算から。まず`bags/demo_01`・`test01`で確認 → クラス分布を出力）
+             - ✅ `expert()`と共通の`beams_to_mode()`にした（2026-10-09、`33d5f8e`、3章を参照）。残り（任意）: `expert()`内の`beams_to_mode(&beams)`は`beams`がすでに参照なので`&`は不要（clippyの`needless_borrow`）。テストの境界値は`D_SLOW`/`D_STOP`から作ると定数の変更に追従する
+          3. **（作業中、未コミット）** 書き出しのコードは書き始めた（3章を参照）。ビルドを通すところから
+             - 1回目のエラー（2026-10-09）: タプル`([f32; 24], usize, SpeedMode, f32)`を`write_record`に渡した → `is not an iterator`。`write_record`が受け取るのは**1行ぶんの列の並び**（各要素が`AsRef<[u8]>`＝文字列など）。→ `Vec<String>`で組み立てる方針に
+             - **今のエラー（2026-10-10）**: `result.push(&beam.to_string())`のように**一時的な`String`の参照**を`Vec`に入れている → `E0716 temporary value dropped while borrowed`（`to_string()`の`String`は文の終わりで捨てられるのに、参照だけが`Vec`に残る）。参照ではなく`String`そのものを入れれば通るはず
+             - 残り: `SpeedMode`を数値（0/1/2）にして書く（今は`{:?}`で`Max`などの文字列。**番号の対応は学習crateと共有する**ので置き場所も考える。`policy`に置く案）、ヘッダー行（`b0..b23,class,mode,linear`）、
+               `.unwrap()`2つの扱い（`?`にするか、メッセージ付きで落とすか）、未使用の`use std::fmt::write`と不要な`mut`を消す、`use policy::...`を1行に、`cargo fmt`
+             - 確認: `bags/demo_01`・`test01`で`data.csv`の行数がスキャン数と同じか → クラスとモードの分布を出す（停止は約3.4%のはず）。次にrec01〜14全部（**データは元のPCにある**）
           4. Burnの学習用crateを作る
    - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討
 

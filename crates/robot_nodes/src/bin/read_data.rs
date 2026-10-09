@@ -1,7 +1,11 @@
-use policy::{expert, preprocess_beams};
+use policy::{angular_to_class, beams_to_mode};
+use policy::{Action, expert, preprocess_beams, SpeedMode};
 use std::env;
+use std::fmt::write;
 use std::fs;
+use std::error::Error;
 use std::path::Path;
+use csv::Writer;
 
 const MAX_GAP_NS: u64 = 20_000_000; // scan-> cmd_vel gap: 20ms
 
@@ -18,7 +22,7 @@ pub struct Scan {
     pub ranges: Vec<f32>,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: {} <path_to_scan_data>", args[0]);
@@ -96,4 +100,25 @@ fn main() {
         eprintln!("unmatched count is greater than 0, exiting with error code 1");
         std::process::exit(1);
     }
+    let write_path = Path::new(path).join("data.csv");
+    let mut wtr = Writer::from_path(write_path)?;
+    let mut results:Vec<String> = Vec::new();
+    for scan in scans {
+        let beams = preprocess_beams(&scan.ranges).unwrap();
+        let mut result = Vec::new();
+        for beam in beams{
+            result.push(&beam.to_string());
+        } 
+        let action: Action = expert(&beams);
+        let angular = action.angular;
+        let linear = action.linear;
+        let class = angular_to_class(angular).unwrap();
+        let mode:SpeedMode = beams_to_mode(&beams).0;
+        result.push(&class.to_string());
+        result.push(&format!("{:?}",mode));
+        result.push(&linear.to_string());
+        wtr.write_record(result)?;
+    }
+    wtr.flush()?;
+    Ok(())
 }
