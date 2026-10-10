@@ -1,11 +1,10 @@
-use policy::{angular_to_class, beams_to_mode};
-use policy::{Action, expert, preprocess_beams, SpeedMode};
-use std::env;
-use std::fmt::write;
-use std::fs;
-use std::error::Error;
-use std::path::Path;
 use csv::Writer;
+use policy::{angular_to_class, beams_to_mode};
+use policy::{expert, preprocess_beams, Action, SpeedMode};
+use std::env;
+use std::error::Error;
+use std::fs;
+use std::path::Path;
 
 const MAX_GAP_NS: u64 = 20_000_000; // scan-> cmd_vel gap: 20ms
 
@@ -102,21 +101,34 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let write_path = Path::new(path).join("data.csv");
     let mut wtr = Writer::from_path(write_path)?;
-    let mut results:Vec<String> = Vec::new();
+    let mut results: Vec<String> = Vec::new();
+    let mut header: Vec<String> = Vec::new();
+    for i in 0..24 {
+        let beam = format!("b{}", i);
+        header.push(beam);
+    }
+    header.push(String::from("class"));
+    header.push(String::from("mode"));
+    header.push(String::from("linear"));
+    wtr.write_record(header)?;
     for scan in scans {
-        let beams = preprocess_beams(&scan.ranges).unwrap();
-        let mut result = Vec::new();
-        for beam in beams{
-            result.push(&beam.to_string());
-        } 
+        let beams = preprocess_beams(&scan.ranges)?;
+        let mut result: Vec<String> = Vec::new();
+        for beam in beams {
+            result.push(beam.to_string());
+        }
         let action: Action = expert(&beams);
         let angular = action.angular;
         let linear = action.linear;
-        let class = angular_to_class(angular).unwrap();
-        let mode:SpeedMode = beams_to_mode(&beams).0;
-        result.push(&class.to_string());
-        result.push(&format!("{:?}",mode));
-        result.push(&linear.to_string());
+        let class = angular_to_class(angular)?;
+        let mode: usize = match beams_to_mode(&beams).0 {
+            SpeedMode::Max => 0,
+            SpeedMode::Slow => 1,
+            SpeedMode::Stop => 2,
+        };
+        result.push(class.to_string());
+        result.push(mode.to_string());
+        result.push(linear.to_string());
         wtr.write_record(result)?;
     }
     wtr.flush()?;

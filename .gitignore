@@ -6,3 +6,4 @@
 .pixi/*
 !.pixi/config.toml
 /bags
+.vscode/*
