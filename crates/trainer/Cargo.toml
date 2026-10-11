@@ -10,3 +10,4 @@ path = "src/bin/train.rs"
 [dependencies]
 csv = "1.4.0"
 burn = { version = "~0.22", features = ["train", "vision", "wgpu"] }
+policy = { path = "../policy" }

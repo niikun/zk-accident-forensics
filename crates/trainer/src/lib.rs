@@ -1,6 +1,11 @@
 use std::path::Path;
+use burn::tensor::{Device, Tensor};
+use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
+use burn::prelude::*;
 
-#[derive(Debug, PartialEq)]
+use policy::RANGE_MAX;
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct Item {
     pub beams:Vec<f32>,
     pub class:usize,
@@ -30,6 +35,39 @@ impl Item {
 }
 
 
+#[derive(Clone, Default)]
+pub struct DataBatcher {}
+
+#[derive(Clone, Debug)]
+pub struct Batch {
+    pub inputs: Tensor<2>,
+    pub targets: Tensor<1, Int>,
+}
+
+impl Batcher<Item, Batch> for DataBatcher {
+    fn batch(&self, items:Vec<Item>, device: &Device) -> Batch {
+        let mut beams_flatten:Vec<f32> = Vec::new();
+        let mut samples:usize = 0;
+        for item in &items{
+            for b in &item.beams{
+                beams_flatten.push(*b / RANGE_MAX);
+            }
+            samples += 1;
+        }
+        let inputs_data = TensorData::new(beams_flatten,[samples, 24usize]);
+        let inputs =  Tensor::<2>::from_data(inputs_data, device);
+        let mut classes_flatten:Vec<i64> = Vec::new();
+        for item in items{
+            classes_flatten.push(item.class as i64)
+        }
+        let targets_data = TensorData::new(classes_flatten,[samples]);
+        let targets = Tensor::<1, Int>::from_data(targets_data, device);
+
+        Batch { inputs, targets }
+    }
+}
+
+
 
 #[cfg(test)]
 mod tests{
@@ -45,6 +83,6 @@ mod tests{
         let linear:f32 = 0.2;
         let item_test = Item{beams, class, mode, linear};
         assert_eq!(items[0], item_test);
-        assert_eq!(items.len(), 1usize);
+        assert_eq!(items.len(), 3usize);
     }
 }

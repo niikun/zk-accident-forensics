@@ -1,11 +1,14 @@
+use std::path::PathBuf;
 use burn::nn::loss::{CrossEntropyLoss, CrossEntropyLossConfig};
 use burn::nn::{Linear, LinearConfig, Relu, Dropout,DropoutConfig};
 use burn::tensor::Device;
-use burn::data::{dataloader::batcher::Batcher};
-use burn::train::ClassificationOutput;
+use burn::train::{ClassificationOutput, InferenceStep, Learner, SupervisedTraining, TrainStep, TrainOutput};
+use burn::train::metric::{AccuracyMetric, LossMetric};
+use burn::optim::AdamConfig;
+
 use burn::prelude::*;
 
-use trainer::Item;
+use trainer::{Item, Batch, DataBatcher};
 
 
 #[derive(Module, Debug)]
@@ -24,14 +27,6 @@ pub struct ModelConfig {
     #[config(default = "0.5")]
     dropout: f64
 }
-#[derive(Clone, Default)]
-pub struct DataBatcher {}
-
-#[derive(Clone, Debug)]
-pub struct Batch {
-    pub input: Tensor<2>,
-    pub targets: Tensor<1, Int>,
-}
 
 
 impl ModelConfig {
@@ -46,33 +41,17 @@ impl ModelConfig {
     }
 }
 
-impl Batcher<Item, Batch> for DataBatcher {
-    fn batch(&self, items:Vec<Item>, device: &Device) -> Batch {
-       let inputs = items
-            .iter()
-            .map(|item| TensorData::from( item.beams))
-            .map(|data| Tensor::<2>::from_data(data, device))
-            .collect();
-
-        let targets = items.targets
-            .iter()
-            .map(|item| Tensor::<1, Int>::from_data([item as i64], device))
-            .collect();
-
-        Batch { input, targets }
-    }
-}
 
 impl Model {
     fn forward(&self, batch:Batch) -> Tensor<2>{
-        let x  = self.activation.forward(self.linear1.forward(batch.input));
+        let x  = self.activation.forward(self.linear1.forward(batch.inputs));
         let x = self.dropout.forward(self.activation.forward(self.linear2.forward(x)));
         let output = self.linear3.forward(x);
         output   
     }
 
     fn forward_classification(&self, batch:Batch) ->ClassificationOutput{
-        let output = self.forward(batch.input);
+        let output = self.forward(batch.clone());
         let loss = CrossEntropyLossConfig::new()
                             .init(&output.device())
                             .forward(output.clone(),batch.targets.clone());
@@ -93,11 +72,11 @@ impl TrainStep for Model {
 }
 
 impl InferenceStep for Model {
-    type Input = MnistBatch;
+    type Input = Batch;
     type Output = ClassificationOutput;
 
     fn step(&self, batch: Batch) -> ClassificationOutput {
-        self.forward_classification(batch.input, batch.targets)
+        self.forward_classification(batch)
     }
 }
 
