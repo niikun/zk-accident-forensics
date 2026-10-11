@@ -41,7 +41,9 @@ pub struct DataBatcher {}
 #[derive(Clone, Debug)]
 pub struct Batch {
     pub inputs: Tensor<2>,
-    pub targets: Tensor<1, Int>,
+    pub classes: Tensor<1, Int>,
+    pub modes: Tensor<1, Int>,
+    pub linears: Tensor<1, Float>,
 }
 
 impl Batcher<Item, Batch> for DataBatcher {
@@ -57,13 +59,21 @@ impl Batcher<Item, Batch> for DataBatcher {
         let inputs_data = TensorData::new(beams_flatten,[samples, 24usize]);
         let inputs =  Tensor::<2>::from_data(inputs_data, device);
         let mut classes_flatten:Vec<i64> = Vec::new();
+        let mut modes_flatten:Vec<i64> = Vec::new();
+        let mut linears_flatten:Vec<f64> = Vec::new();
         for item in items{
-            classes_flatten.push(item.class as i64)
+            classes_flatten.push(item.class as i64);
+            modes_flatten.push(item.mode as i64);
+            linears_flatten.push(item.linear as f64);
         }
-        let targets_data = TensorData::new(classes_flatten,[samples]);
-        let targets = Tensor::<1, Int>::from_data(targets_data, device);
+        let classes_data = TensorData::new(classes_flatten,[samples]);
+        let classes = Tensor::<1, Int>::from_data(classes_data, device);
+        let modes_data = TensorData::new(modes_flatten,[samples]);
+        let modes = Tensor::<1, Int>::from_data(modes_data, device);
+        let linears_data = TensorData::new(linears_flatten,[samples]);
+        let linears = Tensor::<1, Float>::from_data(linears_data, device);
 
-        Batch { inputs, targets }
+        Batch { inputs, classes, modes, linears }
     }
 }
 

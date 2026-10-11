@@ -7,3 +7,4 @@
 !.pixi/config.toml
 /bags
 .vscode/*
+/datas/artifact/

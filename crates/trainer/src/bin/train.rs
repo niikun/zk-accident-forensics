@@ -1,5 +1,5 @@
 use std::path::{Path, PathBuf};
-use burn::nn::loss::{CrossEntropyLoss, CrossEntropyLossConfig};
+use burn::nn::loss::{CrossEntropyLoss, CrossEntropyLossConfig,MseLoss, Reduction};
 use burn::nn::{Linear, LinearConfig, Relu, Dropout,DropoutConfig};
 use burn::tensor::Device;
 use burn::train::{ClassificationOutput, InferenceStep, Learner, SupervisedTraining, TrainStep, TrainOutput};
@@ -18,12 +18,15 @@ struct Model {
     linear2: Linear,
     activation: Relu,
     dropout: Dropout,
-    linear3:Linear,
+    out1:Linear,
+    out2:Linear,
+    out3:Linear
 }
 
 #[derive(Config, Debug)]
 pub struct ModelConfig {
     num_classes: usize,
+    num_modes:usize,
     hidden_size: usize,
     #[config(default = "0.1")]
     dropout: f64
@@ -36,26 +39,37 @@ impl ModelConfig {
             linear2: LinearConfig::new(self.hidden_size, self.hidden_size).init(device),
             activation: Relu::new(),
             dropout: DropoutConfig::new(self.dropout).init(),
-            linear3: LinearConfig::new(self.hidden_size, self.num_classes).init(device)
+            out1: LinearConfig::new(self.hidden_size, self.num_classes).init(device),
+            out2: LinearConfig::new(self.hidden_size, self.num_modes).init(device),
+            out3: LinearConfig::new(self.hidden_size, 1).init(device),
         }
     }
 }
 
 impl Model {
-    fn forward(&self, batch:Batch) -> Tensor<2>{
+    fn forward(&self, batch:Batch) -> (Tensor<2>,Tensor<2>,Tensor<2>){
         let x  = self.activation.forward(self.linear1.forward(batch.inputs));
         let x = self.dropout.forward(self.activation.forward(self.linear2.forward(x)));
-        let output = self.linear3.forward(x);
-        output   
+        let output1 = self.out1.forward(x.clone());
+        let output2 = self.out2.forward(x.clone());
+        let output3 = self.out3.forward(x);
+        (output1, output2, output3)   
     }
 
-    fn forward_classification(&self, batch:Batch) ->ClassificationOutput{
-        let output = self.forward(batch.clone());
-        let loss = CrossEntropyLossConfig::new()
-                            .init(&output.device())
-                            .forward(output.clone(),batch.targets.clone());
-        let targets = batch.targets;
-        ClassificationOutput { loss, output, targets }
+    fn forward_classification(&self, batch:Batch) ->ClassificationOutput {
+        let (output1,output2,output3) = self.forward(batch.clone());
+        let loss1 = CrossEntropyLossConfig::new()
+                            .init(&output1.device())
+                            .forward(output1.clone(),batch.classes.clone());
+        let loss2 = CrossEntropyLossConfig::new()
+                            .init(&output2.device())
+                            .forward(output2.clone(), batch.modes.clone());
+        let loss3 = MseLoss::new()
+                            .forward(output3.clone().reshape([output3.dims()[0]]), batch.linears,Reduction::Auto);
+        let loss = loss1 + loss2 + loss3;
+        let output = output1;
+        let targets = batch.classes ;
+        ClassificationOutput { loss, output, targets}
     }
 }
 
@@ -111,8 +125,6 @@ pub fn train(artifact_dir: &str, config: TrainingConfig, train_items:Vec<Item>, 
     let autodiff_device = device.autodiff();
 
     let batcher = DataBatcher::default();
-    // let train_batch = Batcher::batch(&batcher,&train_items, &device);
-    // let test_batch = Batcher::batch(&batcher,&test_items, &device);
 
     let train_dataset = InMemDataset::new(train_items);
     let test_dataset =InMemDataset::new(test_items);
@@ -158,6 +170,7 @@ fn main() {
     let artifact_dir = "datas/artifact";
     let model_config = ModelConfig::new(
         9,
+        3,
         128
     );
     let model = model_config.init(&device);
@@ -166,7 +179,7 @@ fn main() {
         model: model_config,
         optimizer: optimizer,
         num_epochs: 50,
-        batch_size:32,
+        batch_size:64,
         num_workers: 4,
         seed: 42,
         learning_rate: 0.001

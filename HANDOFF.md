@@ -153,8 +153,23 @@
   - ✅ **`Batcher`ができた**（2026-10-11）: `lib.rs`に`DataBatcher`・`Batch { inputs: Tensor<2>, targets: Tensor<1, Int> }`・`impl Batcher<Item, Batch>`。全行の`beams`を`/ policy::RANGE_MAX`して1本の`Vec<f32>`に並べ、`TensorData::new(値, [行数, 24])`から`Tensor<2>`を1回で作る。`class`は`Vec<i64>`→`[行数]`の`Tensor<1, Int>`（デバイス側でI32になる）。
     `policy`を`trainer`の依存に追加済み。`bin/batch.rs`で確認: **1行→`[1, 24]`・`[1]`、3行→`[3, 24]`（288バイト）・`[3]`（12バイト）**。`Device::wgpu(Default::default())`は**この環境で動いた**（GPU未検出のパニックなし）。先頭の値は`1.1593302/10`のバイト列と一致。
     ⬜ 残り: `Batcher`の**形のテスト**を`lib.rs`に書く（複数行の`Item`を直接作って`dims()`と、2行目の値を1か所）、`DataLoaderBuilder`の未使用`use`を消す、`samples += 1`は`items.len()`で足りる
-  - ⬜ `src/bin/train.rs`: Model（24→H→H→num_classes、Dropout）・ModelConfig・TrainingConfig・train関数まで書いた（`Batch`・`DataBatcher`・`Item`は`use trainer::{..}`に差し替え済み）。**まだビルドが通らない**（10月11日時点で15件）: `use`の不足（TrainStep・TrainOutput・InferenceStep・AdamConfig・DataLoaderBuilder・SupervisedTraining・AccuracyMetric・LossMetric・Learner・PathBuf）、
-    `InferenceStep`の`type Input = MnistBatch`（Bookのコピーのまま）、`input`→`inputs`の名前、`fn main`が無い。`train`関数の`train_data: Vec<String>`はDataset（`Vec<Item>`を包む型）に直す
+  - ✅ **`src/bin/train.rs`でangularの学習が回った**（2026-10-11）: Model（24→128→128→9、ReLU、Dropout）・ModelConfig・TrainingConfig・`train`関数・`main`。`Vec<Item>`は`InMemDataset::new(..)`で包んで`DataLoaderBuilder`に渡す。
+    実行は`pixi run cargo run -p trainer --bin trainer`（bin が3つ=batch・read_csv・trainer あるので`--bin`が要る。`Cargo.toml`の`default-run = "trainer"`でも可）。成果物は`datas/artifact`（`config.json`・チェックポイント・最終モデル）。`Device::wgpu`で動いた
+    - **学習の結果（train 2,969件／valid＝testの314件、バッチ32、lr 1e-3）**:
+
+      | 設定 | Train精度 | Valid精度 | Valid損失 |
+      |---|---|---|---|
+      | 2エポック・dropout 0.5 | 43.4% | 39.5% | 1.61 |
+      | 20エポック・dropout 0.5 | 74.0% | 79.0% | 0.601 |
+      | 50エポック・dropout 0.1 | 86.6% | 82.5% | 0.538（エポック34が最小） |
+
+      - 2エポックの精度は「いつもclass 4（直進）」と答える水準と**一致**（train 1,290/2,969＝43.45%、valid 124/314＝39.49%）＝何も学べていない状態。エポックを増やすと上がった（パイプラインは正しい）
+      - **hidden_sizeは上げない**（容量ではなく学習の設定の問題だった）。むしろSP1の証明コストのため小さくしたい（24→128→128→9で約20,900乗算、64なら約6,200）。精度が出るなら64を試す
+      - Validが Trainより高いのはdropout（学習中だけ効く）のため。Valid損失がエポック34で最小→その後上昇は軽い過学習の始まり。最終モデルはエポック50（損失最小のエポック34はチェックポイントに残る）
+      - **この精度はangular 9クラス全体の正解率**。停止の再現率はまだ測っていない。モデルはまだ`linear`もmodeも出さないので、**これだけでは走らせられない**
+    - **学び（形）**: `reshape`の引数は**数字1つではなく形の配列**（`reshape([n])`。`reshape(n)`は`usize: ReshapeArgs`が満たされない）。**バッチサイズを形に直書きしない**: 2,969件÷64＝46バッチ余り25件なので最後のバッチは25件になる（`reshape([64])`は`[25, 1]`で「要素数が合わない」パニック）。`output.dims()[0]`で実測のバッチ数を取る。回帰の頭の出力は`[バッチ, 1]`なので、正解`[バッチ]`と揃えるため`reshape([dims()[0]])`
+    - **学び（git）**: 学習の成果物`datas/artifact/`（212ファイル、2.6MB。エポックごとのログ・チェックポイント・`model.bpk`）は再生成できるので`.gitignore`に`/datas/artifact/`を追加し、`git rm -r --cached datas/artifact`で追跡から外した（`--cached`が無いと手元のファイルも消える）。`start learning`のコミット`6036668`には入ったまま（履歴には残る）。残したいモデルは別の場所（例`models/`）に固定の名前でコピーする案
+    - **学び**: `cargo run`が「どのbinか決められない」ときは`--bin`か`default-run`。`Dataset`は`Vec`ではなく`InMemDataset::new(Vec<I>)`（`burn::data::dataset::`、`burn-dataset`のソースで確認）。`ModelConfig::new(..)`の引数は`#[config(default)]`の無いフィールドが宣言順、`dropout`は`.with_dropout(..)`で上書き
     - `use`の置き場（Burn 0.22のソースで確認）: `TrainStep`・`InferenceStep`・`TrainOutput`・`SupervisedTraining`・`Learner`・`ClassificationOutput`は`burn::train::`、`AccuracyMetric`・`LossMetric`は`burn::train::metric::`、`AdamConfig`は`burn::optim::`、`DataLoaderBuilder`は`burn::data::dataloader::`。実物は`~/.cargo/registry/src/*/burn-*-0.22.0/src/`にあり、`grep -rn "pub struct X"`で探せる
   - **学び**: `cargo test --bin X foo.csv`の`foo.csv`は**テスト名の絞り込み**で、プログラムの引数ではない（0件になる）。テストはコマンドラインの引数に頼らず、パスを引数に取る関数を直接呼ぶ。
     **カレントディレクトリが違う**: `cargo test`はパッケージのディレクトリ（`crates/trainer/`）で動くので`tests/data/...`が通るが、`cargo run`は**コマンドを実行した場所**（プロジェクト直下）で動く。`bin/batch.rs`は`"crates/trainer/tests/data/item_test.csv"`と書いて動かした（どこからでも動かすなら`env!("CARGO_MANIFEST_DIR")`か引数）
@@ -571,8 +586,23 @@ cargo build && cargo test -p policy
                `Batcher::batch(&self, items, device: &Device)`、`TrainStep::step`は`TrainOutput::new(self, loss.backward(), item)`。Cargo.tomlは`burn = { version = "~0.22", features = [...] }`で固定
              - **未確認**: CPUバックエンドのfeature名（Bookは`wgpu`の例のみ。この環境はAMD内蔵GPUのみ）。Bookの"backend and device table"と`examples/guide`で確かめる。`pixi run cargo`でワークスペースに混ぜても`rclrs`に引きずられないか
              - ✅ train/testの列は揃った（どちらも`run`列あり）。✅ `Item`・`read_csv`・テストは`lib.rs`にある（3章を参照）
-             - **次の順番**: ①✅`Batcher`（`lib.rs`に移動済み、形の確認済み）→形のテストを書く ②`train.rs`の`use`を足す・`MnistBatch`→`Batch`・`inputs`の名前・`fn main`を作る
-               ③`train`関数を通す（`Dataset`は`Vec<Item>`を包む型。名前はBurn 0.22のソースで確認する）（学習率は1e-3くらいから、dropoutは0.5だと強いので小さく、検証用ローダの`shuffle`は不要、`num_workers`は0〜1）④train/testの精度と**停止クラスの再現率**を出す ⑤頭を3つに増やす
+             - **次の順番**: ①✅`Batcher`（`lib.rs`に移動済み、形の確認済み）→⬜形のテストを書く ②✅`train.rs`が通った ③✅`train`関数が回り、angularは Train 86.6%／Valid 82.5%（3章を参照）
+               ④✅**頭を3つに増やした**（2026-10-11、下の「3つの頭の設計」と結果）⑤**（次はここから）停止クラスの再現率とmodeの混同行列を出す**（testの停止57件が分母。学習済みモデルで推論して自分で数える）⑥重みの書き出し→`policy`にfloat推論→`policy_node`に切り替え→Gazeboで走行→動画
+             - **3つの頭の結果（2026-10-11、50エポック・dropout 0.1・lr 1e-3・バッチ64、損失＝CE(angular)+CE(mode)+MSE(linear)、マスクなし・重みなし）**: パラメータ21,389（24→128→128→{9, 3, 1}）。
+               Train精度 39.7%→**81.9%**、Valid精度 39.5%→**84.7%**（エポック47）、合計損失 Train 2.63→0.629、Valid 2.88→0.742（エポック47が最小）。**angularは頭1つのとき（Train 86.6%／Valid 82.5%）とほぼ同じ水準**＝頭を足してもangularは崩れていない。
+               **画面のAccuracyはangularだけ**。modeの精度・停止の再現率・linearの誤差は**まだ測っていない**（合計損失が下がっているのでmode・linearも学習は進んでいるはず、というだけ）
+             - **評価コードの作り方（次の作業）**: 学習済みの`datas/artifact/model.bpk`を`Module::load_file(self, path)`（`burn-core/src/module/base.rs`、`save_file`と対）で空のモデル（`ModelConfig::init`）に読み込む→testの全件（314件）を1バッチにして`forward`→modeは`argmax`で予測し、**停止の再現率＝真が停止かつ予測も停止÷真が停止（分母57）**と3×3の混同行列、linearは平均二乗誤差と最大誤差。
+               dropoutが推論で働かないよう、autodiffなしのdeviceで動かすか確認する（未確認）。判断の目安: 停止の再現率90%以上なら合格。停止を「全速」と間違えると壁にぶつかる（「減速」との間違いは危険度が低い）。低ければ損失の重み（停止3.4%）を増やす、または停止データを追加収集
+             - **3つの頭の設計（2026-10-11）**: 共通の胴体（Linear→ReLU→Linear→ReLU）に、`head_angular`（9クラス）・`head_mode`（3クラス）・`head_linear`（回帰1個）。変更は4か所:
+               ①`Batch`に`modes: Tensor<1, Int>`と`linears: Tensor<1>`を足す（`Batcher`で`Item`から作る。形のテストも）②`Model`の出力層を3つに、`forward`が3つ返す ③損失＝`CE(angular)+CE(mode)+λ·MSE` ④`TrainStep`/`InferenceStep`の出力型
+               - **停止の行をangularの損失から除く**: `CrossEntropyLossConfig`に`pad_tokens`（損失で無視するクラス番号。`with_pad_tokens`）がある。停止の行の正解を9にして指定する案は、**範囲外参照にならないか未確認**（ソースか小さな実験で）。代案は停止の行を除いてから計算
+               - **回帰の損失は減速（mode 1）の行だけ**: `(予測−正解)² × マスク`の平均で手計算できる。**【訂正 2026-10-11】マスクは必須ではなかった**: `linear`は全行で定義されている値（停止0・全速0.2・減速は中間）なので、マスクなしで全行に学習させて動いた。推論のときにmodeで場合分けすれば足りる。マスク付きにするなら`MseLoss::forward_no_reduction`（サンプルごとの二乗誤差）が使える
+               - **実装で分かったこと（2026-10-11）**: `Batch`は`inputs`・`classes`・`modes`（`Tensor<1, Int>`）・`linears`（`Tensor<1, Float>`）。`Model`は`out1`（9）・`out2`（3）・`out3`（1）の3つの出力層で、`forward`は3つのテンソルのタプルを返す。
+                 **`forward_classification`は`ClassificationOutput`を1つだけ返す**（`loss`＝3つの損失の合計、`output`/`targets`＝angular）。`backward()`は合計の1つの損失から呼ぶ（3回ではない）。
+                 損失1・2は`CrossEntropyLoss`（正解は整数`Tensor<1, Int>`）、損失3は**`MseLoss`**（`burn::nn::loss::{MseLoss, Reduction}`、`forward(予測, 正解, Reduction::Mean)`。`CrossEntropyLoss`に`linears`を渡すと`expected Tensor<1, Int>, found Tensor<1>`）。
+                 `Reduction`は「サンプルごとの損失を1つの数値にまとめる方法」（Mean＝平均、Sum＝合計、BatchMean、Auto。MseLossではAuto＝Mean）。3つの損失を同じ尺度（平均）にそろえて足す
+               - **出力型の最短の道**: `ClassificationOutput`をそのまま使い、`loss`に3つの合計、`output`/`targets`はangularの頭のものを入れる（型の自作が要らない。画面のLossは合計、Accuracyはangular）。モードの精度・停止の再現率は学習後に別の評価コードで測る
+               - 順番: まずマスクなしで動かし、あとでマスクを足す。損失の重み（停止3.4%）は最初は入れず、再現率が低ければ足す。推論の組み立て: 停止なら`(0, 0.8)`に固定、全速なら`VMAX`、減速のときだけ回帰の値
              - `policy`を`trainer`の依存に足す（ROS非依存）。CPUバックエンドが使えるか未確認なので、`wgpu`で`Device`が作れるか最小の`main`（`Tensor::zeros([32, 24])`を`forward`）で先に確かめる
              - 残り（任意）: `read_csv`の列の位置を列名で引く、`unwrap()`に行番号を含むメッセージ、`train.rs`先頭の未使用`use`
    - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討
