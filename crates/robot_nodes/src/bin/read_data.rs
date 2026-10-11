@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
     let write_path = Path::new(path).join("data.csv");
     let mut wtr = Writer::from_path(write_path)?;
-    let mut results: Vec<String> = Vec::new();
+  
     let mut header: Vec<String> = Vec::new();
     for i in 0..24 {
         let beam = format!("b{}", i);

@@ -1,0 +1,12 @@
+[package]
+name = "trainer"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "trainer"
+path = "src/bin/train.rs"
+
+[dependencies]
+csv = "1.4.0"
+burn = { version = "~0.22", features = ["train", "vision", "wgpu"] }

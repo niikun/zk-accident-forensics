@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-10-10
+最終更新: 2026-10-11
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -137,8 +137,29 @@
 - **モード判定を`policy`に共通化した**（2026-10-09、`33d5f8e`）: `pub enum SpeedMode { Max, Slow, Stop }`と`pub fn beams_to_mode(&[f32; NUM_BEAMS]) -> (SpeedMode, f32)`（モードと`front_min`）、
   前方13本を取り出す`choose_target_beams()`（非公開）。`expert()`はこれらを使う形に変更（振る舞いは同じ）。`angular_to_class`のループの`0..=NUM_ANGULAR_CLASSES`→`0..NUM_ANGULAR_CLASSES`も修正（どのクラスにも当たらない値でclass 9の`unwrap()`がpanicしていた）。
   `test_beams_to_mode`（0.5→Max、0.49・0.25→Slow、0.24→Stop）を追加し、`cargo test -p policy`は**9件通過**（2026-10-09）
-- **（作業中・未コミット、サブPC）`read_data`に中間CSV`<run>/data.csv`の書き出しを追加中**（2026-10-09〜10）。照合の`exit(1)`のあとで、各スキャンを`preprocess_beams()`→`expert()`→`angular_to_class()`・`beams_to_mode()`にかけ、
-  1行＝24本＋class＋mode＋linearを`csv::Writer`で書く。`main`は`Result<(), Box<dyn Error>>`に変更。**まだビルドが通らない**（6章5-5の3）
+- **`read_data`に中間CSV`<run>/data.csv`の書き出しができた**（2026-10-10、**未コミット**）。照合の`exit(1)`のあとで、各スキャンを`preprocess_beams()`→`expert()`→`angular_to_class()`・`beams_to_mode()`にかけ、
+  ヘッダー付き（`b0..b23,class,mode,linear`）で1行ずつ`csv::Writer`で書く。modeは数値（Max=0 / Slow=1 / Stop=2）。**ビルドは通る**（警告3件: 未使用の`results`・`use std::fmt::write`・`mode`の初期値。`cargo fmt`も未適用）。
+  対応表（SpeedMode↔数値）は`read_data`に手書きなので、学習crateと共有するため`policy`に置く案（未決）
+- **デモを追加で収集し、全runを連結した**（2026-10-10）: `bags/rec15`〜`rec18`（rec15は録り直し）。**rec01〜18の全18本で`data.csv`があり、照合は不一致0・対応なし0**（新規4本）。
+  連結は`notebook/`で行い、`datas/all_data.csv`（3,283行×28列＝`run,b0..b23,class,mode,linear`、NaNなし）を作った。
+  - 全体（rec01を除く2,681件）: 全速2,060（76.8%）・減速449（16.7%）・**停止172（6.4%）**。rec01は99.8%が全速で停止0
+  - 新規4本（473件）は停止86（rec16: 20、rec17: 19、rec18: 47）。以前の全14本の停止は86件だったので**倍増**
+  - **train/testに分けた**（`datas/train.csv` 2,969行・`datas/test.csv` 314行）。testは**rec14とrec16**（停止57・減速74・全速183）、trainの停止は115。行数の合計とmode別件数は`all_data.csv`と一致。
+    **trainには`run`列がなく、testにはある**（27列と28列。どちらかに揃える。CSVには`run`を残して学習側で列名で選ぶ案）
+- **Burnの学習用crate `crates/trainer`を作り始めた**（2026-10-10〜11、**未コミット**）。ワークスペースの`members`に追加済み、依存は`burn = "~0.22"`（features: train, vision, wgpu）と`csv`。
+  - ✅ `src/lib.rs`: `pub struct Item { beams: Vec<f32>, class, mode, linear }`と`Item::read_csv(path: &Path) -> Vec<Item>`（列の位置は数字で固定: `b0`〜`b23`が1〜24、class 25、mode 26、linear 27。先頭の`run`列を読み飛ばす前提）。
+    `cargo test -p trainer --lib`で`test_read_csv`通過（`tests/data/item_test.csv`＝rec01の先頭1行で、1件・先頭の中身を確認）
+  - ✅ `src/bin/read_csv.rs`: 引数のファイル名（`datas/`の下）を読んで表示する薄いbin。`pixi run cargo run -p trainer --bin read_csv -- train.csv`で、train 2,969件・test 314件、`beams`はすべて24本、先頭行はCSVと一致
+  - ⬜ `src/bin/train.rs`: Model（24→H→H→num_classes、Dropout）・ModelConfig・Batch・TrainingConfig・train関数まで書いた。**まだビルドが通らない**（15件）: `use`の不足（TrainStep・TrainOutput・InferenceStep・AdamConfig・DataLoaderBuilder・SupervisedTraining・AccuracyMetric・LossMetric・Learner・PathBuf）、
+    `InferenceStep`の`type Input = MnistBatch`（Bookのコピーのまま）、`Batcher`の中身（`input`の名前、`items.targets`は存在しない、`TensorData::from(item.beams)`は所有権の問題、`[バッチ, 24]`への組み立て、`/ RANGE_MAX`の正規化が未実装）、`fn main`が無い
+  - **学び**: `cargo test --bin X foo.csv`の`foo.csv`は**テスト名の絞り込み**で、プログラムの引数ではない（0件になる）。テストはコマンドラインの引数に頼らず、パスを引数に取る関数を直接呼ぶ。`cargo test`はパッケージのディレクトリ（`crates/trainer/`）で動くので、`tests/data/...`の相対パスが通る
+  - **学び**: cargoが読むのは`src/lib.rs`・`src/main.rs`・`src/bin/*.rs`（`libs.rs`や`crates/trainer/lib.rs`は読まれない）。ワークスペース直下の`examples/`はどのパッケージにも属さず`--example`で見つからない（`crates/<pkg>/examples/`に置く）。
+    `cargo test -p trainer`は全ターゲットをコンパイルするので、`train.rs`が壊れていると`read_csv`のテストも落ちる→当面は`--lib`か`--bin read_csv`を付ける
+  - **学び**: `Reader::from_reader(File::open(..))`の`.expect`は位置が違う（`Result`を外す前に`from_reader`へ渡している）。パスから開くなら`csv::Reader::from_path(..)`。`args[0]`は実行ファイル自身のパス、渡した引数は`args[1]`
+  - **学び**: `Item`の置き場: 共有する部品は`lib.rs`、`bin/`は薄く。`examples/`は使い方の例で、試作の置き場に使うなら確認できたら`lib.rs`＋テストへ移す
+  - **学び（Burn 0.22）**: `Tensor<2>`の`2`は**次元の数**（形ではない）。`Batcher<Item, Batch>`の`batch`は`Vec<Item>`を受け取る（`class`を別引数にはできない）。`ClassificationOutput`は`::new(loss, output, targets)`、ラベルは`Tensor<1, Int>`
+- **train.csvとtest.csvは、どちらも先頭に`run`列を持つ形（28列）に揃っている**（2026-10-11に確認。10/10時点のtrainは27列だった）
+- **`datas/`・`notebook/`・`.vscode/`と`pixi.toml`/`pixi.lock`（`jupyter`を追加）、`crates/trainer/`は未コミット**。`datas/`は再生成できるので`.gitignore`に入れるか決める（約850KBと小さい）。`tests/data/item_test.csv`はコミットする
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`
@@ -243,11 +264,11 @@ cargo build && cargo test -p policy
 | W4 10/19–25 | S3（事故の主張）、シナリオB/C、検証結果の可視化（✅/❌） |
 | W5 10/26–11/1 | 動画・レポート・README仕上げ、提出 |
 
-## 6. 次にやること（W2。次は5-5の3「中間CSVの書き出し」のビルドを通す。デモの収集は10/6に終了）
+## 6. 次にやること（W2。次は5-5の4「Burnの学習用crate」。データ（`datas/train.csv`・`test.csv`）は用意できた）
 
 > **スケジュールの注意（2026-10-09）**: W2の残り（学習・固定小数点化・走行・動画）は10/11までには厳しい。まず**浮動小数点のMLPで走って動画を撮る**（合格ラインの確保）を優先し、固定小数点化はW3の頭に回す案（未決、ユーザーが判断）
 >
-> **元のPCに移るとき（2026-10-10）**: サブPCの`read_data.rs`の変更は**未コミット**（ビルドが通らない途中の状態）。サブPCでコミットしてpushし（途中でも可、メッセージに`WIP`など）、元のPCで`git pull`してから続ける。元のPCにはrec01〜14のデータがあるので、ビルドが通ったら全runで`data.csv`を作れる
+> **PCをまたぐとき（2026-10-10）**: `read_data.rs`・`pixi.toml`/`pixi.lock`・`notebook/`は**未コミット**。`bags/`は`.gitignore`なので、別のPCで使うなら`datas/*.csv`（約850KB）をコミットするか、コピーして運ぶ
 
 0. 環境をpixiに統一する（4章。ユーザーが実施）
    1. 元のPC: 秘書ノートをpush、✅ `rust-toolchain.toml`を追加
@@ -462,6 +483,9 @@ cargo build && cargo test -p policy
           - **学び**: `log_time`の前後には意味がない（bagの受信順。因果は必ずscan→cmd）。条件に`c.log_time > scan.log_time`を残すと、順番が入れ替わった組（scan 81）を窓をいくら広げても拾えない
         - **W3への要件（blackbox）**: 時刻から組を推測するのは根本の弱点。S1/S2は「この観測→この行動」の組をコミットするので、**組はノードの中で確定させる**
           （例: `policy_node`が行動に元のスキャンの`header.stamp`を付けて記録する）。`blackbox_node`の設計で決める
+        - **rec15の初回で起きた過渡**（2026-10-10）: 記録の最初の約1.3秒、スキャン0〜9に`/cmd_vel`が無く、その後に10件が1.31〜1.46秒の間にまとめて届いた（`/cmd_vel`の間隔の最小0.0001ms。件数は118対118で欠けなし）。
+          時刻の最近傍で照合すると、スキャン0〜8が`no_action` 9件、スキャン9がまとめて届いた先頭の指令（本当はスキャン0への応答）と組になり`unmatched` 1件。**ノードや`expert()`の不具合ではなく、時刻から組を推測する方式の限界**（上の「W3への要件」の根拠）。
+          対策: `pixi run policy`を起動し、`ros2 topic echo /cmd_vel`で指令が流れているのを確かめてから`ros2 bag record`を始める（置き直しは記録を始めたあと）。録り直したrec15は53件で不一致0・対応なし0
         - **学び**: `ros2 bag record`は存在しないトピック名を指定してもエラーにならず、現れるのを待ち続ける（demo_01の1回目は`/cmd_vel`しか入らず、`data_scan.csv`が1バイトになった）。記録後に`ros2 bag info`で確かめる
         - **学び**: `Path(...).glob()`は、フォルダが無くてもエラーにならず空を返す（`demo01`と`demo_01`の打ち間違いで「fileが1個ではありません」）。`is_dir()`で先に確かめるか、メッセージに件数を入れる
         - **軌道は繰り返す**（確認済み）: シミュレーションも`expert()`も決まった計算なので、走り続けると同じ周回に落ち着く。置き直すと**逆回りの周回**に入ることもある（左右両方の曲がり方が集まるので良い）。
@@ -514,13 +538,23 @@ cargo build && cargo test -p policy
           2. ✅ **モード判定**（全速/減速/停止＝`front_min`と`D_SLOW`/`D_STOP`）を`expert()`と共通の関数にする。停止のとき`angular`は0.8固定でclass 8と衝突するので、モードを先に決め、停止サンプルは`angular`の損失を掛けない
           3. `read_data`に中間CSV（24本のbeams＋`angular`のクラス番号＋モード＋`linear`）の書き出しを足す（ラベルは`preprocess_beams()`→`expert()`の再計算から。まず`bags/demo_01`・`test01`で確認 → クラス分布を出力）
              - ✅ `expert()`と共通の`beams_to_mode()`にした（2026-10-09、`33d5f8e`、3章を参照）。残り（任意）: `expert()`内の`beams_to_mode(&beams)`は`beams`がすでに参照なので`&`は不要（clippyの`needless_borrow`）。テストの境界値は`D_SLOW`/`D_STOP`から作ると定数の変更に追従する
-          3. **（作業中、未コミット）** 書き出しのコードは書き始めた（3章を参照）。ビルドを通すところから
-             - 1回目のエラー（2026-10-09）: タプル`([f32; 24], usize, SpeedMode, f32)`を`write_record`に渡した → `is not an iterator`。`write_record`が受け取るのは**1行ぶんの列の並び**（各要素が`AsRef<[u8]>`＝文字列など）。→ `Vec<String>`で組み立てる方針に
-             - **今のエラー（2026-10-10）**: `result.push(&beam.to_string())`のように**一時的な`String`の参照**を`Vec`に入れている → `E0716 temporary value dropped while borrowed`（`to_string()`の`String`は文の終わりで捨てられるのに、参照だけが`Vec`に残る）。参照ではなく`String`そのものを入れれば通るはず
-             - 残り: `SpeedMode`を数値（0/1/2）にして書く（今は`{:?}`で`Max`などの文字列。**番号の対応は学習crateと共有する**ので置き場所も考える。`policy`に置く案）、ヘッダー行（`b0..b23,class,mode,linear`）、
-               `.unwrap()`2つの扱い（`?`にするか、メッセージ付きで落とすか）、未使用の`use std::fmt::write`と不要な`mut`を消す、`use policy::...`を1行に、`cargo fmt`
-             - 確認: `bags/demo_01`・`test01`で`data.csv`の行数がスキャン数と同じか → クラスとモードの分布を出す（停止は約3.4%のはず）。次にrec01〜14全部（**データは元のPCにある**）
-          4. Burnの学習用crateを作る
+          3. ✅ **中間CSVの書き出し**（2026-10-10）。ビルドが通り、全18runで`data.csv`ができた（行数＝スキャン数、NaNなし）。
+             - **学び**: `write_record`が受け取るのは**1行ぶんの列の並び**（各要素が`AsRef<[u8]>`）。タプルは渡せない。`Vec<String>`で組み立てる。参照（`&beam.to_string()`）を`Vec`に入れると`E0716`（一時的な`String`が文の終わりで捨てられる）。`String`そのものを入れる
+             - 残り（任意）: 警告3件（未使用の`results`・`use std::fmt::write`・`mode`の初期値→`match`を式にする）、`cargo fmt`、`SpeedMode`↔数値の対応を`policy`へ、`.unwrap()`の扱い
+             - **学び（pandas）**: `pd.concat(..., keys=[...])`のindexは2段。`names=["run", None]`を渡すと1段目に`run`の名前が付く。`reset_index()`は**代入しないと`df`が変わらない**。`to_csv`は`index=False`（付けないと`Unnamed: 0`列が増える）。`value_counts`は出なかったmodeを行ごと落とす→run×modeの表は`pd.crosstab`
+             - **学び（カーネル）**: ノートブックのカーネルをpixi環境（`.pixi/envs/default/bin/python`）に切り替える。別のPythonに`pip install`しない
+          4. **（次はここから）Burnの学習用crateを作る**（`crates/trainer`、ROS非依存、`policy`のみに依存）
+             - 方針: 先に`angular` 9クラスの分類だけの最小のループ（24→H→9）を作り、train/testの精度を出す。そのあとで頭を3つ（angular／mode／減速量の回帰）に増やす
+             - 入力は`beams / RANGE_MAX`（正規化は`policy`に置く案）。学習の入力は`b0..b23`の24列だけ。`run`列は分割・集計にだけ使う。停止（mode 2）の行は`angular`の損失から除く（class 8との衝突回避）。回帰の損失は減速（mode 1）の行だけ
+             - 評価は精度より**停止クラスの再現率**（testの停止57件が分母）。最終評価はGazeboでの閉ループ走行
+             - **Burn 0.22.0**（2026-10-06公開、4日前）。Bookは`burn.dev/books/burn/basic-workflow/`。**古い記事と違う点**: `Tensor<2>`・`Model`に**backendのジェネリクスがない**／`Device`を値で渡す（`Device::wgpu(..)`、autodiffは`device.autodiff()`）／`ValidStep`→`InferenceStep`／`LearnerBuilder`→`SupervisedTraining::new(..)`＋`.launch(learner)`／保存は`.bpk`。
+               `Batcher::batch(&self, items, device: &Device)`、`TrainStep::step`は`TrainOutput::new(self, loss.backward(), item)`。Cargo.tomlは`burn = { version = "~0.22", features = [...] }`で固定
+             - **未確認**: CPUバックエンドのfeature名（Bookは`wgpu`の例のみ。この環境はAMD内蔵GPUのみ）。Bookの"backend and device table"と`examples/guide`で確かめる。`pixi run cargo`でワークスペースに混ぜても`rclrs`に引きずられないか
+             - ✅ train/testの列は揃った（どちらも`run`列あり）。✅ `Item`・`read_csv`・テストは`lib.rs`にある（3章を参照）
+             - **次の順番**: ①`train.rs`の`use`を足す・`MnistBatch`→`Batch`・`fn main`を作る ②`Batcher`を直す（`[バッチ, 24]`の`Tensor<2>`、`class`→`Tensor<1, Int>`、`/ policy::RANGE_MAX`）→`lib.rs`に移して**形のテスト**（`dims()`）を書く
+               ③`train`関数を通す（学習率は1e-3くらいから、dropoutは0.5だと強いので小さく、検証用ローダの`shuffle`は不要、`num_workers`は0〜1）④train/testの精度と**停止クラスの再現率**を出す ⑤頭を3つに増やす
+             - `policy`を`trainer`の依存に足す（ROS非依存）。CPUバックエンドが使えるか未確認なので、`wgpu`で`Device`が作れるか最小の`main`（`Tensor::zeros([32, 24])`を`forward`）で先に確かめる
+             - 残り（任意）: `read_csv`の列の位置を列名で引く、`unwrap()`に行番号を含むメッセージ、`train.rs`先頭の未使用`use`
    - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討
 
 ### SDF作りのメモ
