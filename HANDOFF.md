@@ -150,9 +150,17 @@
   - ✅ `src/lib.rs`: `pub struct Item { beams: Vec<f32>, class, mode, linear }`と`Item::read_csv(path: &Path) -> Vec<Item>`（列の位置は数字で固定: `b0`〜`b23`が1〜24、class 25、mode 26、linear 27。先頭の`run`列を読み飛ばす前提）。
     `cargo test -p trainer --lib`で`test_read_csv`通過（`tests/data/item_test.csv`＝rec01の先頭1行で、1件・先頭の中身を確認）
   - ✅ `src/bin/read_csv.rs`: 引数のファイル名（`datas/`の下）を読んで表示する薄いbin。`pixi run cargo run -p trainer --bin read_csv -- train.csv`で、train 2,969件・test 314件、`beams`はすべて24本、先頭行はCSVと一致
-  - ⬜ `src/bin/train.rs`: Model（24→H→H→num_classes、Dropout）・ModelConfig・Batch・TrainingConfig・train関数まで書いた。**まだビルドが通らない**（15件）: `use`の不足（TrainStep・TrainOutput・InferenceStep・AdamConfig・DataLoaderBuilder・SupervisedTraining・AccuracyMetric・LossMetric・Learner・PathBuf）、
-    `InferenceStep`の`type Input = MnistBatch`（Bookのコピーのまま）、`Batcher`の中身（`input`の名前、`items.targets`は存在しない、`TensorData::from(item.beams)`は所有権の問題、`[バッチ, 24]`への組み立て、`/ RANGE_MAX`の正規化が未実装）、`fn main`が無い
-  - **学び**: `cargo test --bin X foo.csv`の`foo.csv`は**テスト名の絞り込み**で、プログラムの引数ではない（0件になる）。テストはコマンドラインの引数に頼らず、パスを引数に取る関数を直接呼ぶ。`cargo test`はパッケージのディレクトリ（`crates/trainer/`）で動くので、`tests/data/...`の相対パスが通る
+  - ✅ **`Batcher`ができた**（2026-10-11）: `lib.rs`に`DataBatcher`・`Batch { inputs: Tensor<2>, targets: Tensor<1, Int> }`・`impl Batcher<Item, Batch>`。全行の`beams`を`/ policy::RANGE_MAX`して1本の`Vec<f32>`に並べ、`TensorData::new(値, [行数, 24])`から`Tensor<2>`を1回で作る。`class`は`Vec<i64>`→`[行数]`の`Tensor<1, Int>`（デバイス側でI32になる）。
+    `policy`を`trainer`の依存に追加済み。`bin/batch.rs`で確認: **1行→`[1, 24]`・`[1]`、3行→`[3, 24]`（288バイト）・`[3]`（12バイト）**。`Device::wgpu(Default::default())`は**この環境で動いた**（GPU未検出のパニックなし）。先頭の値は`1.1593302/10`のバイト列と一致。
+    ⬜ 残り: `Batcher`の**形のテスト**を`lib.rs`に書く（複数行の`Item`を直接作って`dims()`と、2行目の値を1か所）、`DataLoaderBuilder`の未使用`use`を消す、`samples += 1`は`items.len()`で足りる
+  - ⬜ `src/bin/train.rs`: Model（24→H→H→num_classes、Dropout）・ModelConfig・TrainingConfig・train関数まで書いた（`Batch`・`DataBatcher`・`Item`は`use trainer::{..}`に差し替え済み）。**まだビルドが通らない**（10月11日時点で15件）: `use`の不足（TrainStep・TrainOutput・InferenceStep・AdamConfig・DataLoaderBuilder・SupervisedTraining・AccuracyMetric・LossMetric・Learner・PathBuf）、
+    `InferenceStep`の`type Input = MnistBatch`（Bookのコピーのまま）、`input`→`inputs`の名前、`fn main`が無い。`train`関数の`train_data: Vec<String>`はDataset（`Vec<Item>`を包む型）に直す
+    - `use`の置き場（Burn 0.22のソースで確認）: `TrainStep`・`InferenceStep`・`TrainOutput`・`SupervisedTraining`・`Learner`・`ClassificationOutput`は`burn::train::`、`AccuracyMetric`・`LossMetric`は`burn::train::metric::`、`AdamConfig`は`burn::optim::`、`DataLoaderBuilder`は`burn::data::dataloader::`。実物は`~/.cargo/registry/src/*/burn-*-0.22.0/src/`にあり、`grep -rn "pub struct X"`で探せる
+  - **学び**: `cargo test --bin X foo.csv`の`foo.csv`は**テスト名の絞り込み**で、プログラムの引数ではない（0件になる）。テストはコマンドラインの引数に頼らず、パスを引数に取る関数を直接呼ぶ。
+    **カレントディレクトリが違う**: `cargo test`はパッケージのディレクトリ（`crates/trainer/`）で動くので`tests/data/...`が通るが、`cargo run`は**コマンドを実行した場所**（プロジェクト直下）で動く。`bin/batch.rs`は`"crates/trainer/tests/data/item_test.csv"`と書いて動かした（どこからでも動かすなら`env!("CARGO_MANIFEST_DIR")`か引数）
+  - **学び（所有権）**: `for x in v`は所有権を渡す（`v`はもう使えない）、`for x in &v`は読むだけ借りる（`x`は参照。`&item.beams`なら`b`は`&f32`で、`*b / RANGE_MAX`か`b / RANGE_MAX`）、`for x in &mut v`は書き換えるために借りる（`v`も`mut`が要る）。`E0507 cannot move out of ... behind a shared reference`は`&`を付けるか`clone`
+  - **学び**: `batch`のような`&self`のメソッドは、インスタンスを作って`インスタンス.batch(..)`と呼ぶ（`DataBatcher::batch(items, &device)`だと`&self`の位置に`items`が入って「引数が足りない」）。`DataBatcher::default()`でインスタンスを作る
+  - **学び**: `{:?}`で`Tensor`を出しても形は見えない。`.dims()`、または`.to_data()`で`TensorData { shape: .., dtype: .. }`が見える
   - **学び**: cargoが読むのは`src/lib.rs`・`src/main.rs`・`src/bin/*.rs`（`libs.rs`や`crates/trainer/lib.rs`は読まれない）。ワークスペース直下の`examples/`はどのパッケージにも属さず`--example`で見つからない（`crates/<pkg>/examples/`に置く）。
     `cargo test -p trainer`は全ターゲットをコンパイルするので、`train.rs`が壊れていると`read_csv`のテストも落ちる→当面は`--lib`か`--bin read_csv`を付ける
   - **学び**: `Reader::from_reader(File::open(..))`の`.expect`は位置が違う（`Result`を外す前に`from_reader`へ渡している）。パスから開くなら`csv::Reader::from_path(..)`。`args[0]`は実行ファイル自身のパス、渡した引数は`args[1]`
@@ -267,6 +275,18 @@ cargo build && cargo test -p policy
 ## 6. 次にやること（W2。次は5-5の4「Burnの学習用crate」。データ（`datas/train.csv`・`test.csv`）は用意できた）
 
 > **スケジュールの注意（2026-10-09）**: W2の残り（学習・固定小数点化・走行・動画）は10/11までには厳しい。まず**浮動小数点のMLPで走って動画を撮る**（合格ラインの確保）を優先し、固定小数点化はW3の頭に回す案（未決、ユーザーが判断）
+>
+> **完走の見立て（2026-10-11、Claudeの推測であって保証ではない）**: 締切11/2 AM10:00まで約3週間。実質の開発はW4末（10/25ごろ）まで
+>
+> | ライン | 中身 | 見立て |
+> |---|---|---|
+> | A: 合格ライン | 学習した方策で走る動画＋コード＋レポート | 高い。今週〜来週頭 |
+> | B: 中核 | A＋S1（ログ完全性）＋S2（忠実な実行）＋改ざんを弾く場面（C）。S3は簡単な版でも | 狙える。**SP1が初見**が最大の不確かさ |
+> | C: 構想すべて | B＋S3の完全版・衝突検知・不可避/AI過失の両方・飛び出し | 厳しい。全部は入れない |
+>
+> - **Aだけでは優秀賞は難しい**（合格ラインで差別化点がない）。**優秀賞を狙うならBまで**。技術が同じでも動画の見せ方（最初の10秒で問題提起、✅/❌、仕組み図1枚）で印象が変わる
+> - **今週のうちに決める・やること**: ①**固定小数点化をやるか**（f32のMLPをSP1 guestで動かせるなら大きく時間が浮く。早めに試す）②**SP1の予習**（Hello ZK Robotを動かす。6章末の「サブPCでROSなしでできること」）③**何を削るか**（先に削る: AI過失の場面B'、衝突検知の凝った方式。後まで残す: S1・S2・改ざんを弾く場面）④毎週末に「今のペースでBに届くか」を見直す
+> - 今週の山の目安（実働2〜4日）: Batcherテスト→`train.rs`を通す→学習→重みを`policy`に埋め込んでfloat推論（`no_std`）→`policy_node`に切り替えてGazeboで走らせる→動画。不確かさが大きいのは「重みの書き出し・読み込み」と「閉ループで壁の手前で止まれるか」
 >
 > **PCをまたぐとき（2026-10-10）**: `read_data.rs`・`pixi.toml`/`pixi.lock`・`notebook/`は**未コミット**。`bags/`は`.gitignore`なので、別のPCで使うなら`datas/*.csv`（約850KB）をコミットするか、コピーして運ぶ
 
@@ -551,8 +571,8 @@ cargo build && cargo test -p policy
                `Batcher::batch(&self, items, device: &Device)`、`TrainStep::step`は`TrainOutput::new(self, loss.backward(), item)`。Cargo.tomlは`burn = { version = "~0.22", features = [...] }`で固定
              - **未確認**: CPUバックエンドのfeature名（Bookは`wgpu`の例のみ。この環境はAMD内蔵GPUのみ）。Bookの"backend and device table"と`examples/guide`で確かめる。`pixi run cargo`でワークスペースに混ぜても`rclrs`に引きずられないか
              - ✅ train/testの列は揃った（どちらも`run`列あり）。✅ `Item`・`read_csv`・テストは`lib.rs`にある（3章を参照）
-             - **次の順番**: ①`train.rs`の`use`を足す・`MnistBatch`→`Batch`・`fn main`を作る ②`Batcher`を直す（`[バッチ, 24]`の`Tensor<2>`、`class`→`Tensor<1, Int>`、`/ policy::RANGE_MAX`）→`lib.rs`に移して**形のテスト**（`dims()`）を書く
-               ③`train`関数を通す（学習率は1e-3くらいから、dropoutは0.5だと強いので小さく、検証用ローダの`shuffle`は不要、`num_workers`は0〜1）④train/testの精度と**停止クラスの再現率**を出す ⑤頭を3つに増やす
+             - **次の順番**: ①✅`Batcher`（`lib.rs`に移動済み、形の確認済み）→形のテストを書く ②`train.rs`の`use`を足す・`MnistBatch`→`Batch`・`inputs`の名前・`fn main`を作る
+               ③`train`関数を通す（`Dataset`は`Vec<Item>`を包む型。名前はBurn 0.22のソースで確認する）（学習率は1e-3くらいから、dropoutは0.5だと強いので小さく、検証用ローダの`shuffle`は不要、`num_workers`は0〜1）④train/testの精度と**停止クラスの再現率**を出す ⑤頭を3つに増やす
              - `policy`を`trainer`の依存に足す（ROS非依存）。CPUバックエンドが使えるか未確認なので、`wgpu`で`Device`が作れるか最小の`main`（`Tensor::zeros([32, 24])`を`forward`）で先に確かめる
              - 残り（任意）: `read_csv`の列の位置を列名で引く、`unwrap()`に行番号を含むメッセージ、`train.rs`先頭の未使用`use`
    - 同じ軌道の繰り返しを避ける工夫（開始位置・向きを変える。gzのサービスで車を置き直すなど）は、デモ収集の段階で検討

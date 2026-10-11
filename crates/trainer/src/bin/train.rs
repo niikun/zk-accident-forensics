@@ -1,11 +1,12 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use burn::nn::loss::{CrossEntropyLoss, CrossEntropyLossConfig};
 use burn::nn::{Linear, LinearConfig, Relu, Dropout,DropoutConfig};
 use burn::tensor::Device;
 use burn::train::{ClassificationOutput, InferenceStep, Learner, SupervisedTraining, TrainStep, TrainOutput};
 use burn::train::metric::{AccuracyMetric, LossMetric};
 use burn::optim::AdamConfig;
-
+use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
+use burn::data::dataset::InMemDataset;
 use burn::prelude::*;
 
 use trainer::{Item, Batch, DataBatcher};
@@ -24,10 +25,9 @@ struct Model {
 pub struct ModelConfig {
     num_classes: usize,
     hidden_size: usize,
-    #[config(default = "0.5")]
+    #[config(default = "0.1")]
     dropout: f64
 }
-
 
 impl ModelConfig {
     pub fn init(&self, device: &Device) -> Model {
@@ -40,7 +40,6 @@ impl ModelConfig {
         }
     }
 }
-
 
 impl Model {
     fn forward(&self, batch:Batch) -> Tensor<2>{
@@ -101,30 +100,34 @@ fn create_artifact_dir(artifact_dir: &str) {
     std::fs::create_dir_all(artifact_dir).ok();
 }
 
-pub fn train(artifact_dir: &str, config: TrainingConfig, device: impl Into<Device>,train_data:Vec<String>, test_data:Vec<String>) {
+pub fn train(artifact_dir: &str, config: TrainingConfig, train_items:Vec<Item>, test_items:Vec<Item>, device:Device) {
     create_artifact_dir(artifact_dir);
     config
         .save(format!("{artifact_dir}/config.json"))
         .expect("Config should be saved successfully");
 
-    let device = device.into();
+
     device.seed(config.seed);
     let autodiff_device = device.autodiff();
 
-    let batcher = Batcher::default();
-    let items = Item::read_csv();
+    let batcher = DataBatcher::default();
+    // let train_batch = Batcher::batch(&batcher,&train_items, &device);
+    // let test_batch = Batcher::batch(&batcher,&test_items, &device);
+
+    let train_dataset = InMemDataset::new(train_items);
+    let test_dataset =InMemDataset::new(test_items);
 
     let dataloader_train = DataLoaderBuilder::new(batcher.clone())
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(train_data);
+        .build(train_dataset);
 
     let dataloader_test = DataLoaderBuilder::new(batcher)
         .batch_size(config.batch_size)
         .shuffle(config.seed)
         .num_workers(config.num_workers)
-        .build(test_data);
+        .build(test_dataset);
 
     let training = SupervisedTraining::new(artifact_dir, dataloader_train, dataloader_test)
         .metrics((AccuracyMetric::new(), LossMetric::new()))
@@ -144,4 +147,31 @@ pub fn train(artifact_dir: &str, config: TrainingConfig, device: impl Into<Devic
         .into_record()
         .save(format!("{artifact_dir}/model"))
         .expect("Trained model should be saved successfully");
+}
+
+fn main() {
+    let train_path = Path::new("datas/train.csv");
+    let test_path = Path::new("datas/test.csv");
+    let train_items = Item::read_csv(train_path);
+    let test_items = Item::read_csv(test_path);
+    let device = Device::wgpu(Default::default());
+    let artifact_dir = "datas/artifact";
+    let model_config = ModelConfig::new(
+        9,
+        128
+    );
+    let model = model_config.init(&device);
+    let optimizer = AdamConfig::new();
+    let train_config = TrainingConfig{
+        model: model_config,
+        optimizer: optimizer,
+        num_epochs: 50,
+        batch_size:32,
+        num_workers: 4,
+        seed: 42,
+        learning_rate: 0.001
+    };
+
+    train(artifact_dir, train_config,train_items,test_items,device);
+
 }
