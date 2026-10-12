@@ -168,7 +168,16 @@
       - Validが Trainより高いのはdropout（学習中だけ効く）のため。Valid損失がエポック34で最小→その後上昇は軽い過学習の始まり。最終モデルはエポック50（損失最小のエポック34はチェックポイントに残る）
       - **この精度はangular 9クラス全体の正解率**。停止の再現率はまだ測っていない。モデルはまだ`linear`もmodeも出さないので、**これだけでは走らせられない**
     - **学習の到達点（2026-10-12）**: 入力を1 mで打ち切る正規化（`policy::normalize_beam`）＋λ=10で、**modeの正解率97.5%・停止の再現率89.5%（51/57）・停止を全速と間違える危険な誤り0件**・減速（予測）のMSE 0.00193。angularはValid約81%。詳細は6章5-5の4「評価の結果と正規化の発見」。**走行に進んでよい水準と判断**（残りの改善は走らせて困ったら戻る）。
-      **次**: 重みを`policy`に入れる。`.bpk`は`no_std`では読めないので、Rustのソースに配列として埋め込む案（形式・生成方法は未決）。`policy`に`normalize_beam`を通した入力で行列積＋ReLUのfloat推論を実装→`policy_node`に切り替え→Gazebo。未コミット: `policy/src/lib.rs`（`normalize_beam`）・`trainer/src/lib.rs`・`train.rs`・`eval.rs`
+      **2026-10-12夜の進捗**: 重みの書き出しまで完了。`trainer`の`extract()`が`model-49.bpk`を読み、10個の`Vec<f32>`（l1/l2/out1〜3の重みとバイアス）を返す。`bin/extract.rs`が`crates/policy/src/weights.rs`に`pub const L1_W: [f32; 3072]`などとして書き出し、`policy`の`mod weights;`で`cargo build -p policy`が通った。
+      構造は 24→128→ReLU→128→ReLU→3つの頭（out1: 128→9 angular、out2: 128→3 mode、out3: 128→1 linear）。重みは`[入力, 出力]`、平坦化は`w[i*O + j]`の想定（**テストで要確認**）。
+      **ハマり**: `policy`の`Cargo.toml`に`trainer`/`burn`を足すと循環依存になる（`trainer`→`policy`）。`policy`は依存ゼロ・`no_std`のまま保つ。重みの生成は`trainer`側、生成物のファイルだけ`policy`に置く。
+      **次（サブPCでもできる）**: `policy`に`dense`（1層）・ReLU・3層の推論を書き、小さな数の例（I=2, O=2, w=[1,2,3,4], b=[0,0], x=[1,1] → [4,6]）でテスト→Burnの出力との突き合わせ→`policy_node`に切り替え→Gazebo。基準値（test.csvの1行の入力と各頭の出力）は元のPCで取る。
+      **サブPCの注意（GPUとメモリ）**: サブPCはAMD内蔵GPUのみ。`policy`（`no_std`・burn非依存）の実装とテストはCPUだけで動くのでGPU不要。
+      `trainer`は`Device::wgpu(..)`固定（`extract`・`train`・`eval`・`batch`）で、元のPC（Quadro T1000）では動いたが、サブPC（WSL2）では動くか未確認（デバイス未検出でpanicする恐れ）。
+      学習・`extract`・基準値の取得は元のPCで行い、サブPCは`policy`に集中する。サブPCで`trainer`を動かす必要が出たら、`burn`のfeaturesを`ndarray`（CPU）に切り替える案（MLPが小さいのでCPUで数秒〜数十秒）。
+      ビルドは`-p policy`を付ける（`pixi run cargo test -p policy`）。ワークスペース全体だと`trainer`の5つのbinが同時にリンクされ、メモリ（サブPCは約12GB）を食って止まる（2026-10-12、元のPCでも空きメモリ約100MBまで下がった）。bin1本ずつ（`--bin extract`）、`-j 2`、rust-analyzerの再起動で緩和できる。
+      `datas/test.csv`・`train.csv`・`all_data.csv`は**gitに入っている**ので`git pull`で来る。入らないのは`datas/artifact/`（チェックポイント。`.gitignore`済み）だけ。
+      （以前の次）重みを`policy`に入れる。`.bpk`は`no_std`では読めないので、Rustのソースに配列として埋め込む案（形式・生成方法は未決）。`policy`に`normalize_beam`を通した入力で行列積＋ReLUのfloat推論を実装→`policy_node`に切り替え→Gazebo。未コミット: `policy/src/lib.rs`（`normalize_beam`）・`trainer/src/lib.rs`・`train.rs`・`eval.rs`
     - **学び（形）**: `reshape`の引数は**数字1つではなく形の配列**（`reshape([n])`。`reshape(n)`は`usize: ReshapeArgs`が満たされない）。**バッチサイズを形に直書きしない**: 2,969件÷64＝46バッチ余り25件なので最後のバッチは25件になる（`reshape([64])`は`[25, 1]`で「要素数が合わない」パニック）。`output.dims()[0]`で実測のバッチ数を取る。回帰の頭の出力は`[バッチ, 1]`なので、正解`[バッチ]`と揃えるため`reshape([dims()[0]])`
     - **学び（git）**: 学習の成果物`datas/artifact/`（212ファイル、2.6MB。エポックごとのログ・チェックポイント・`model.bpk`）は再生成できるので`.gitignore`に`/datas/artifact/`を追加し、`git rm -r --cached datas/artifact`で追跡から外した（`--cached`が無いと手元のファイルも消える）。`start learning`のコミット`6036668`には入ったまま（履歴には残る）。残したいモデルは別の場所（例`models/`）に固定の名前でコピーする案
     - **学び**: `cargo run`が「どのbinか決められない」ときは`--bin`か`default-run`。`Dataset`は`Vec`ではなく`InMemDataset::new(Vec<I>)`（`burn::data::dataset::`、`burn-dataset`のソースで確認）。`ModelConfig::new(..)`の引数は`#[config(default)]`の無いフィールドが宣言順、`dropout`は`.with_dropout(..)`で上書き
@@ -184,7 +193,7 @@
   - **学び**: `Item`の置き場: 共有する部品は`lib.rs`、`bin/`は薄く。`examples/`は使い方の例で、試作の置き場に使うなら確認できたら`lib.rs`＋テストへ移す
   - **学び（Burn 0.22）**: `Tensor<2>`の`2`は**次元の数**（形ではない）。`Batcher<Item, Batch>`の`batch`は`Vec<Item>`を受け取る（`class`を別引数にはできない）。`ClassificationOutput`は`::new(loss, output, targets)`、ラベルは`Tensor<1, Int>`
 - **train.csvとtest.csvは、どちらも先頭に`run`列を持つ形（28列）に揃っている**（2026-10-11に確認。10/10時点のtrainは27列だった）
-- **`datas/`・`notebook/`・`.vscode/`と`pixi.toml`/`pixi.lock`（`jupyter`を追加）、`crates/trainer/`は未コミット**。`datas/`は再生成できるので`.gitignore`に入れるか決める（約850KBと小さい）。`tests/data/item_test.csv`はコミットする
+- **`datas/`・`notebook/`・`.vscode/`と`pixi.toml`/`pixi.lock`（`jupyter`を追加）、`crates/trainer/`は未コミット**。【2026-10-12訂正】`datas/*.csv`（`all_data.csv`・`train.csv`・`test.csv`）はコミット済みで、`.gitignore`の対象は`/datas/artifact/`だけ。`tests/data/item_test.csv`はコミットする
 - 疎通確認のやり方（Gazeboなし、偽スキャン。ターミナル3つ、すべてプロジェクト直下で）:
   1. `pixi run ./target/debug/policy_node`
   2. `pixi run ros2 topic echo /cmd_vel`

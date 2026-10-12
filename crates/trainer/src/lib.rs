@@ -1,6 +1,12 @@
 use std::path::Path;
 use burn::tensor::{Device, Tensor};
 use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
+use burn::nn::loss::{CrossEntropyLoss, CrossEntropyLossConfig,MseLoss, Reduction};
+use burn::nn::{Linear, LinearConfig, Relu, Dropout,DropoutConfig};
+use burn::train::{ClassificationOutput, InferenceStep, Learner, SupervisedTraining, TrainStep, TrainOutput};
+use burn::train::metric::{AccuracyMetric, LossMetric};
+use burn::optim::AdamConfig;
+use burn::store::ModuleRecord;
 use burn::prelude::*;
 
 use policy::normalize_beam;
@@ -78,6 +84,120 @@ impl Batcher<Item, Batch> for DataBatcher {
 }
 
 
+#[derive(Module, Debug)]
+pub struct Model {
+    pub linear1: Linear,
+    pub linear2: Linear,
+    pub activation: Relu,
+    pub dropout: Dropout,
+    pub out1:Linear,
+    pub out2:Linear,
+    pub out3:Linear
+}
+
+#[derive(Config, Debug)]
+pub struct ModelConfig {
+    pub num_classes: usize,
+    pub num_modes:usize,
+    pub hidden_size: usize,
+    #[config(default = "0.1")]
+    pub dropout: f64
+}
+
+impl ModelConfig {
+    pub fn init(&self, device: &Device) -> Model {
+        Model {
+            linear1: LinearConfig::new(24,self.hidden_size).init(device),
+            linear2: LinearConfig::new(self.hidden_size, self.hidden_size).init(device),
+            activation: Relu::new(),
+            dropout: DropoutConfig::new(self.dropout).init(),
+            out1: LinearConfig::new(self.hidden_size, self.num_classes).init(device),
+            out2: LinearConfig::new(self.hidden_size, self.num_modes).init(device),
+            out3: LinearConfig::new(self.hidden_size, 1).init(device),
+        }
+    }
+}
+
+impl Model {
+    pub fn forward(&self, batch:Batch) -> (Tensor<2>,Tensor<2>,Tensor<2>){
+        let x  = self.activation.forward(self.linear1.forward(batch.inputs));
+        let x = self.dropout.forward(self.activation.forward(self.linear2.forward(x)));
+        let output1 = self.out1.forward(x.clone());
+        let output2 = self.out2.forward(x.clone());
+        let output3 = self.out3.forward(x);
+        (output1, output2, output3)   
+    }
+
+    pub fn forward_classification(&self, batch:Batch) ->ClassificationOutput {
+        let (output1,output2,output3) = self.forward(batch.clone());
+        let loss1 = CrossEntropyLossConfig::new()
+                            .init(&output1.device())
+                            .forward(output1.clone(),batch.classes.clone());
+        let loss2 = CrossEntropyLossConfig::new()
+                            .init(&output2.device())
+                            .forward(output2.clone(), batch.modes.clone());
+        let loss3 = MseLoss::new()
+                            .forward(output3.clone().reshape([output3.dims()[0]]), batch.linears,Reduction::Auto);
+        let loss = loss1 + loss2 + loss3 * 10;
+        let output = output1;
+        let targets = batch.classes ;
+        ClassificationOutput { loss, output, targets}
+    }
+}
+
+impl TrainStep for Model {
+    type Input = Batch;
+    type Output = ClassificationOutput;
+
+    fn step(&self, batch: Batch) -> TrainOutput<ClassificationOutput> {
+        let item = self.forward_classification(batch);
+
+        TrainOutput::new(self, item.loss.backward(), item)
+    }
+}
+
+impl InferenceStep for Model {
+    type Input = Batch;
+    type Output = ClassificationOutput;
+
+    fn step(&self, batch: Batch) -> ClassificationOutput {
+        self.forward_classification(batch)
+    }
+}
+
+
+pub fn extract() ->[Vec<f32>;10]{
+    let model_path = Path::new("datas/artifact/checkpoint/model-49.bpk");
+    let record = ModuleRecord::load(model_path) 
+        .expect("Should be able to load the model weights from the provided file");
+    let device = Device::wgpu(Default::default());
+    let model_config = ModelConfig::new(9, 3, 128);
+    let model = model_config.init(&device)
+                                    .load_record(record);
+    let linear1_weights:Vec<f32> = model.linear1.weight.val().to_data().to_vec().unwrap();
+    let linear1_bias:Vec<f32> = model.linear1.bias.unwrap().val().to_data().to_vec().unwrap();
+    let linear2_weights:Vec<f32> = model.linear2.weight.val().to_data().to_vec().unwrap();
+    let linear2_bias:Vec<f32> = model.linear2.bias.unwrap().val().to_data().to_vec().unwrap();
+    let out1_weights:Vec<f32> = model.out1.weight.val().to_data().to_vec().unwrap();
+    let out1_bias:Vec<f32> = model.out1.bias.unwrap().val().to_data().to_vec().unwrap();
+    let out2_weights:Vec<f32> = model.out2.weight.val().to_data().to_vec().unwrap();
+    let out2_bias:Vec<f32> = model.out2.bias.unwrap().val().to_data().to_vec().unwrap();
+    
+    let out3_weights:Vec<f32> = model.out3.weight.val().to_data().to_vec().unwrap();
+    let out3_bias:Vec<f32> = model.out3.bias.unwrap().val().to_data().to_vec().unwrap();
+    [linear1_weights, 
+        linear1_bias,
+        linear2_weights,
+        linear2_bias,
+        out1_weights,
+        out1_bias,
+        out2_weights,
+        out2_bias,
+        out3_weights,
+        out3_bias
+    ]
+    
+} 
 
 #[cfg(test)]
 mod tests{

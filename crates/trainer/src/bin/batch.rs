@@ -14,7 +14,7 @@ pub fn main() {
     let device = Device::wgpu(Default::default());
     let batch = batcher.batch(items,&device);
     println!("{:?}",batch.inputs.to_data());
-    println!("{:?}",batch.targets.to_data());
+    println!("{:?}",batch.classes.to_data());
     println!("{:?}",batch.inputs.dims());
-    println!("{:?}",batch.targets.dims());
+    println!("{:?}",batch.classes.dims());
 }
