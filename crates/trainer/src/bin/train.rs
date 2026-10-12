@@ -66,7 +66,7 @@ impl Model {
                             .forward(output2.clone(), batch.modes.clone());
         let loss3 = MseLoss::new()
                             .forward(output3.clone().reshape([output3.dims()[0]]), batch.linears,Reduction::Auto);
-        let loss = loss1 + loss2 + loss3;
+        let loss = loss1 + loss2 + loss3 * 10;
         let output = output1;
         let targets = batch.classes ;
         ClassificationOutput { loss, output, targets}

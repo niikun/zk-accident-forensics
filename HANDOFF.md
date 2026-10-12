@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-10-11
+最終更新: 2026-10-12
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -167,6 +167,8 @@
       - **hidden_sizeは上げない**（容量ではなく学習の設定の問題だった）。むしろSP1の証明コストのため小さくしたい（24→128→128→9で約20,900乗算、64なら約6,200）。精度が出るなら64を試す
       - Validが Trainより高いのはdropout（学習中だけ効く）のため。Valid損失がエポック34で最小→その後上昇は軽い過学習の始まり。最終モデルはエポック50（損失最小のエポック34はチェックポイントに残る）
       - **この精度はangular 9クラス全体の正解率**。停止の再現率はまだ測っていない。モデルはまだ`linear`もmodeも出さないので、**これだけでは走らせられない**
+    - **学習の到達点（2026-10-12）**: 入力を1 mで打ち切る正規化（`policy::normalize_beam`）＋λ=10で、**modeの正解率97.5%・停止の再現率89.5%（51/57）・停止を全速と間違える危険な誤り0件**・減速（予測）のMSE 0.00193。angularはValid約81%。詳細は6章5-5の4「評価の結果と正規化の発見」。**走行に進んでよい水準と判断**（残りの改善は走らせて困ったら戻る）。
+      **次**: 重みを`policy`に入れる。`.bpk`は`no_std`では読めないので、Rustのソースに配列として埋め込む案（形式・生成方法は未決）。`policy`に`normalize_beam`を通した入力で行列積＋ReLUのfloat推論を実装→`policy_node`に切り替え→Gazebo。未コミット: `policy/src/lib.rs`（`normalize_beam`）・`trainer/src/lib.rs`・`train.rs`・`eval.rs`
     - **学び（形）**: `reshape`の引数は**数字1つではなく形の配列**（`reshape([n])`。`reshape(n)`は`usize: ReshapeArgs`が満たされない）。**バッチサイズを形に直書きしない**: 2,969件÷64＝46バッチ余り25件なので最後のバッチは25件になる（`reshape([64])`は`[25, 1]`で「要素数が合わない」パニック）。`output.dims()[0]`で実測のバッチ数を取る。回帰の頭の出力は`[バッチ, 1]`なので、正解`[バッチ]`と揃えるため`reshape([dims()[0]])`
     - **学び（git）**: 学習の成果物`datas/artifact/`（212ファイル、2.6MB。エポックごとのログ・チェックポイント・`model.bpk`）は再生成できるので`.gitignore`に`/datas/artifact/`を追加し、`git rm -r --cached datas/artifact`で追跡から外した（`--cached`が無いと手元のファイルも消える）。`start learning`のコミット`6036668`には入ったまま（履歴には残る）。残したいモデルは別の場所（例`models/`）に固定の名前でコピーする案
     - **学び**: `cargo run`が「どのbinか決められない」ときは`--bin`か`default-run`。`Dataset`は`Vec`ではなく`InMemDataset::new(Vec<I>)`（`burn::data::dataset::`、`burn-dataset`のソースで確認）。`ModelConfig::new(..)`の引数は`#[config(default)]`の無いフィールドが宣言順、`dropout`は`.with_dropout(..)`で上書き
@@ -580,14 +582,30 @@ cargo build && cargo test -p policy
              - **学び（カーネル）**: ノートブックのカーネルをpixi環境（`.pixi/envs/default/bin/python`）に切り替える。別のPythonに`pip install`しない
           4. **（次はここから）Burnの学習用crateを作る**（`crates/trainer`、ROS非依存、`policy`のみに依存）
              - 方針: 先に`angular` 9クラスの分類だけの最小のループ（24→H→9）を作り、train/testの精度を出す。そのあとで頭を3つ（angular／mode／減速量の回帰）に増やす
-             - 入力は`beams / RANGE_MAX`（正規化は`policy`に置く案）。学習の入力は`b0..b23`の24列だけ。`run`列は分割・集計にだけ使う。停止（mode 2）の行は`angular`の損失から除く（class 8との衝突回避）。回帰の損失は減速（mode 1）の行だけ
+             - 入力は`policy::normalize_beam`（**1 mで打ち切る**。当初の`beams / RANGE_MAX`は2026-10-12に置き換えた。下の「評価の結果と正規化の発見」）。学習の入力は`b0..b23`の24列だけ。`run`列は分割・集計にだけ使う。停止（mode 2）の行は`angular`の損失から除く（class 8との衝突回避）。回帰の損失は減速（mode 1）の行だけ
              - 評価は精度より**停止クラスの再現率**（testの停止57件が分母）。最終評価はGazeboでの閉ループ走行
              - **Burn 0.22.0**（2026-10-06公開、4日前）。Bookは`burn.dev/books/burn/basic-workflow/`。**古い記事と違う点**: `Tensor<2>`・`Model`に**backendのジェネリクスがない**／`Device`を値で渡す（`Device::wgpu(..)`、autodiffは`device.autodiff()`）／`ValidStep`→`InferenceStep`／`LearnerBuilder`→`SupervisedTraining::new(..)`＋`.launch(learner)`／保存は`.bpk`。
                `Batcher::batch(&self, items, device: &Device)`、`TrainStep::step`は`TrainOutput::new(self, loss.backward(), item)`。Cargo.tomlは`burn = { version = "~0.22", features = [...] }`で固定
              - **未確認**: CPUバックエンドのfeature名（Bookは`wgpu`の例のみ。この環境はAMD内蔵GPUのみ）。Bookの"backend and device table"と`examples/guide`で確かめる。`pixi run cargo`でワークスペースに混ぜても`rclrs`に引きずられないか
              - ✅ train/testの列は揃った（どちらも`run`列あり）。✅ `Item`・`read_csv`・テストは`lib.rs`にある（3章を参照）
              - **次の順番**: ①✅`Batcher`（`lib.rs`に移動済み、形の確認済み）→⬜形のテストを書く ②✅`train.rs`が通った ③✅`train`関数が回り、angularは Train 86.6%／Valid 82.5%（3章を参照）
-               ④✅**頭を3つに増やした**（2026-10-11、下の「3つの頭の設計」と結果）⑤**（次はここから）停止クラスの再現率とmodeの混同行列を出す**（testの停止57件が分母。学習済みモデルで推論して自分で数える）⑥重みの書き出し→`policy`にfloat推論→`policy_node`に切り替え→Gazeboで走行→動画
+               ④✅**頭を3つに増やした**（2026-10-11、下の「3つの頭の設計」と結果）⑤✅**評価コード`eval.rs`で停止の再現率とmodeの混同行列を出した**（2026-10-12、下の「評価の結果と正規化の発見」。入力を1 mで打ち切る正規化にして**停止の再現率89.5%・危険な誤り0件**）⑥**（次はここから）重みの書き出し→`policy`にfloat推論（`no_std`）→`policy_node`に切り替え→Gazeboで走行→動画**
+             - **評価の結果と正規化の発見（2026-10-12）**: `crates/trainer/src/bin/eval.rs`（`ModelConfig::init`で空のモデル→`load_file`で`datas/artifact/checkpoint/model-49.bpk`を読む→testの314件を`DataBatcher::batch`で1バッチ→`forward`1回→`outputs.1.argmax(1).into_data().into_vec::<i32>()`で`Vec`に取り出し、混同行列と、予測が減速の行のMSEを数える）。
+               **評価は`DataLoader`を使わず1バッチで十分**（テンソルは`Vec`に取り出してから数える）。`Model`/`ModelConfig`は`train.rs`と`eval.rs`に**複製**してある→動いたので`lib.rs`に移して共有する（直し忘れ防止）
+
+               | 条件 | modeの正解率 | 停止の再現率 | 停止→減速 | 減速→停止 | 停止→全速（危険） | 減速（予測）のMSE |
+               |---|---|---|---|---|---|---|
+               | 入力÷10・λ=1 | 93.0% | 43/57＝75.4% | 14 | 5 | 0 | 0.00457（真の減速74件） |
+               | 入力÷10・λ=10 | 92.0% | 43/57＝75.4% | 14 | 6 | 0 | 0.00380 |
+               | 不連続な正規化（下記の失敗） | Valid精度59.9% | — | — | — | — | — |
+               | **入力を1 mで打ち切り・λ=10** | **97.5%（306/314）** | **51/57＝89.5%** | **6** | **0** | **0** | **0.00193**（予測が減速の79件） |
+
+               - **発見（レポートの工夫点候補）**: 入力`beams / 10`だと、判断の境目（停止0.25 m・減速0.5 m）の差が入力の値で0.025しかなく、MLPが見分けられない。λ（回帰の損失の重み）を上げても、停止→減速の14件は**1件も動かなかった**＝損失の重みの問題ではなく**入力の表現の問題**。距離を1 mで打ち切って`/1.0`なしで使う（0.25〜0.5 mが0.25〜0.5＝解像度10倍）と、停止の再現率75.4%→89.5%、減速のMSE 0.00380→0.00193。遠距離の情報が減るぶんangularの精度は少し下がった（Valid 83.1%→81.2%）
+               - **失敗（記録しておく）**: 最初の`normalize_beam`は`if b < 1.0 { b } else { b / RANGE_MAX }`で、1.0 mをまたぐと0.99→0.10に**急落**（**単調でない**）。Trainは82.6%で変わらないがValid精度が59.9%・損失1.88に崩れた（学習データは覚えられるが汎化しない）。**入力の変換は連続で単調にする**
+               - `policy::normalize_beam(&f32) -> f32`は`b.min(1.0)`の1行（`policy`の`pub fn`、`no_std`、ノードとguestで共有）。テスト`test_normalize_beam`あり（0.25・0.99・1.0・1.1）。**`b / RANGE_MAX`は打ち切りに効かない**（前処理後の`b`は最大10なので`b/10`は最大1で`min(.., 1.0)`が何もしない＝元の÷10と同じ）。`f32`は`Ord`でないので`core::cmp::min`は使えず`b.min(1.0)`のメソッド形。`NaN`は`preprocess_beams`で0に置換済みなので来ない。
+                 **直す余地**: 単調性のテスト（0.5→0.99→1.0→1.1→10.0で広義増加）、期待値は実装を写さず数字で書く、最後の`assert_eq!`は`b3`と`beam4`を比べていた書き間違い（`b4`と`1.0`を比べる）
+               - 評価で比べる基準（testの314件）: linearを常に平均0.139で答えるMSE＝0.00652、modeごとの平均を答えるMSE＝0.00037、減速の行の平均（0.094）を答えるMSE＝0.00158。全速のlinearは常に0.2、停止は常に0
+               - 評価の注意: 学習は同じ`datas/artifact`に上書きされる（実験ごとに出力先を分けるか重みをコピー）。`eval.rs`が読む`model-49.bpk`が最新の学習のものか更新日時を確認する。評価のMSEは予測が減速の行だけ（走行で使う定義）
              - **3つの頭の結果（2026-10-11、50エポック・dropout 0.1・lr 1e-3・バッチ64、損失＝CE(angular)+CE(mode)+MSE(linear)、マスクなし・重みなし）**: パラメータ21,389（24→128→128→{9, 3, 1}）。
                Train精度 39.7%→**81.9%**、Valid精度 39.5%→**84.7%**（エポック47）、合計損失 Train 2.63→0.629、Valid 2.88→0.742（エポック47が最小）。**angularは頭1つのとき（Train 86.6%／Valid 82.5%）とほぼ同じ水準**＝頭を足してもangularは崩れていない。
                **画面のAccuracyはangularだけ**。modeの精度・停止の再現率・linearの誤差は**まだ測っていない**（合計損失が下がっているのでmode・linearも学習は進んでいるはず、というだけ）

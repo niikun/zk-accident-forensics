@@ -3,7 +3,7 @@ use burn::tensor::{Device, Tensor};
 use burn::data::dataloader::{batcher::Batcher, DataLoaderBuilder};
 use burn::prelude::*;
 
-use policy::RANGE_MAX;
+use policy::normalize_beam;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Item {
@@ -52,7 +52,7 @@ impl Batcher<Item, Batch> for DataBatcher {
         let mut samples:usize = 0;
         for item in &items{
             for b in &item.beams{
-                beams_flatten.push(*b / RANGE_MAX);
+                beams_flatten.push(normalize_beam(b));
             }
             samples += 1;
         }
