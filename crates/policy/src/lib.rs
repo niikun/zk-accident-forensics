@@ -177,7 +177,7 @@ pub fn angular_to_class(angular: f32) -> Result<usize, Error> {
     Err(Error)
 }
 
-pub fn normalize_beam(beam:&f32)->f32{
+pub fn normalize_beam(beam: &f32) -> f32 {
     let b = *beam;
     b.min(1.0)
 }
@@ -349,7 +349,7 @@ mod tests {
             assert_eq!(beams_to_mode(&beams).0, *mode, "min:{}", min);
         }
     }
-    
+
     #[test]
     fn test_normalize_beam() {
         let beam1 = 0.25;
@@ -369,5 +369,4 @@ mod tests {
         assert_eq!(b4, 1.0);
         assert_eq!(b5, 1.0);
     }
-
 }

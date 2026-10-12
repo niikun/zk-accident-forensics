@@ -1,6 +1,6 @@
 use trainer::extract;
 
-fn main(){
+fn main() {
     let val = extract();
-    println!("{:#?}",val);
+    println!("{:#?}", val);
 }
