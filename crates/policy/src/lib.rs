@@ -1,7 +1,10 @@
 //! LiDAR観測 → 速度指令の方策。ロボットのノードとSP1 guestで同一コードを共有する。
 #![no_std]
 
-use core::{f32::consts::PI, fmt::Error};
+use core::{f32::consts::PI, fmt::Error, hash::Hash};
+
+use crate::weights::L2_W;
+mod weights;
 
 /// 方策に入力するLiDARビーム数（/scanをダウンサンプルした値）
 pub const NUM_BEAMS: usize = 24;
@@ -25,6 +28,8 @@ pub const W_MAX: f32 = 0.8;
 const TIE_EPS: f32 = 0.01;
 /// 回転の9クラス
 pub const NUM_ANGULAR_CLASSES: usize = 9;
+/// hidden layerのサイズ
+pub const NUM_HIDDEN:usize = 128;
 
 /// 速度指令（固定小数点化は学習後に置き換える）
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -182,9 +187,58 @@ pub fn normalize_beam(beam: &f32) -> f32 {
     b.min(1.0)
 }
 
+pub fn dense(x:&[f32],w:&[f32],b:&[f32],out:&mut [f32]) {
+    let in_size: usize = x.len();
+    let out_size: usize = out.len();
+    assert!(w.len() == in_size* out_size);
+    assert!(b.len() == out_size);
+    for i in 0..out_size {
+        out[i] += b[i];
+        for j in 0..in_size{
+            out[i] += w[j * out_size + i] * x[j];
+        } 
+    }
+}
+
+pub fn relu(x:&mut [f32]) ->&[f32] {
+    for i in 0..x.len(){    
+        if x[i] < 0.0{
+            x[i] = 0.0;
+        }
+    }
+    x
+}
+
+pub fn forward(x:&[f32]) -> ([f32;9], [f32;3], [f32;1]) {
+    let mut x1 = [0.0f32;NUM_HIDDEN];
+    dense(x, &weights::L1_W, &weights::L1_B, &mut x1);
+    let x1:&[f32] = relu(&mut x1);
+    let mut x2 = [0.0;NUM_HIDDEN];
+    dense(x1, &weights::L2_W, &weights::L2_B,&mut x2);
+    let x2 = relu(&mut x2);
+    let mut out1 = [0.0f32;9];
+    let mut out2 = [0.0;3];
+    let mut out3 = [0.0];
+    dense(x2, &weights::O1_W, &weights::O1_B, &mut out1);
+    dense(x2, &weights::O2_W, &weights::O2_B,&mut out2);
+    dense(x2, &weights::O3_W, &weights::O3_B, &mut out3);
+    (out1, out2, out3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn test_dense(){
+        let w = [1.0,2.0,3.0, 4.0, 5.0,6.0];
+        let b = [1.0f32;3];
+        let x = [1.0f32;2];
+        let mut out = [0.0f32;3];
+        dense(&x, &w, &b, &mut out);
+        let value = [6.0, 8.0, 10.0];
+        assert_eq!(out, value);
+    }
+
     // preprocessを通さず、24本beamsでexpert単体の挙動を確認
     #[test]
     fn turns_when_blocked() {
