@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-10-12
+最終更新: 2026-10-15
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -175,7 +175,15 @@
       構造はtrainerの`Model::forward`と一致（l1→ReLU→l2→ReLU→3つの頭。推論時のdropoutは何もしないので`policy`には無い）。**float推論の実測確認はまだ**。
       **学び（`dense`のテスト）**: `x`が全部同じ値（`[1,1]`）だと入力の順序の取り違えに気づけない。`x`を非対称にする（`x=[1,0]`・`[0,1]`）と「どの入力がどの重みに掛かるか」が分かる。
       `w=[1,2,3,4,5,6]`（`I=2,O=3`）は`[入力,出力]`の行優先＝入力0の行`[1,2,3]`・入力1の行`[4,5,6]`。`b=[1,1,1]`・`x=[1,0]`の期待値は`[2,3,4]`（`[2,4,6]`は`[出力,入力]`と読み違えた値）、`x=[0,1]`なら`[5,6,7]`。
-      **次（サブPCでもできる）**: ①`policy`のテストを足す（`dense`の非対称な`x`、`relu`、手作りの小さな2層）→`cargo test -p policy`。未コミット: `crates/policy/src/lib.rs`（`test_dense`を非対称な`x`に変更中）。
+      **次（サブPCでもできる）**: ①✅（2026-10-15、サブPC、未コミット）`test_dense`に`x=[1,0]`→`[2,3,4]`・`x=[0,1]`→`[5,6,7]`、`relu`を全部負（→0）と正・0・負の混在（`[1,0,-4]`→`[1,0,0]`）で確認、通過。
+      **学び**: 全部負の入力だけでは「何でも0にする`relu`」でも通る。正が残ることも確かめる。
+      ②'（サブPCでできる代わりの確認）: `crates/policy/tests/`の統合テストで`datas/test.csv`の314行に`normalize_beam`→`forward`をかけ、argmaxを`class`・`mode`列と比べる（evalの約81%・97.5%に近ければ重みの並びは正しい）。`tests/`は別crateなので`std`が使え、`policy`の依存ゼロ・`no_std`を保てる。
+        - **作業中**（2026-10-15、サブPC、未コミット）: `crates/policy/tests/test_policy.rs`を作成。CSVを読んで1行目を表示する段階で、**まだコンパイルが通らない**。
+          残り: `crates/policy/Cargo.toml`に`[dev-dependencies]`で`csv`を足す（本体には入らないので`no_std`・依存ゼロは保てる）、関数に`#[test]`を付ける、`reader.records`→`records()`と`Result`の取り出し、未使用の`use std::fs::File`を消す。
+          その後 1行→`normalize_beam`→`forward`→argmax→集計の順に足す。modeの添字の対応（Max=0/Slow=1/Stop=2）とf32のargmaxの書き方は要確認
+        - 実行: `pixi run cargo test -p policy --test test_policy -- --nocapture`
+        - **学び**: `tests/`の統合テストは`cargo run`ではなく`cargo test --test <ファイル名>`で動かす（`policy`はライブラリでbinが無い）。`#[test]`の無い関数は呼ばれない。成功したテストの`println!`は`-- --nocapture`が無いと隠れる
+        - `lib.rs`に未使用の`use crate::weights::L2_W;`の警告あり（`forward`は`weights::L2_W`で参照）
       ②Burnの出力との突き合わせ（**元のPC**）: `trainer`に比較用bin（例`bin/compare.rs`）を作り、test.csv全314行で`Model::forward`と`policy::forward`を比べる（`normalize_beam`後の24個を同じ入力にする）。見るのは差の最大値（目安`1e-4`以下。f32の足し算の順序が違うのでビット一致は期待しない）とargmax一致数（angular・modeとも314/314が期待）。ずれたら層ごと（l1・l2・頭）に比べて切り分ける。サブPCで続けるなら、参照値を3〜5行分だけ定数にしてテストに埋め込む。
       ③`policy_node`に切り替え→Gazebo（元のPC）。
       **サブPCの注意（GPUとメモリ）**: サブPCはAMD内蔵GPUのみ。`policy`（`no_std`・burn非依存）の実装とテストはCPUだけで動くのでGPU不要。

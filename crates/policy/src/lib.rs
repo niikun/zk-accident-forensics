@@ -232,11 +232,26 @@ mod tests {
     fn test_dense(){
         let w = [1.0,2.0,3.0, 4.0, 5.0,6.0];
         let b = [1.0f32;3];
-        let x = [1.0,0.0];
-        let mut out = [0.0f32;3];
-        dense(&x, &w, &b, &mut out);
-        let value = [2.0, 3.0, 4.0];
-        assert_eq!(out, value);
+        let x1 = [1.0,0.0];
+        let x2 = [0.0,1.0];
+        let x3 = [0.0,-1.0];
+        let mut out1 = [0.0f32;3];
+        let mut out2 = [0.0f32;3];
+        let mut out3 = [0.0f32;3];
+        dense(&x1, &w, &b, &mut out1);
+        dense(&x2, &w, &b, &mut out2);
+        dense(&x3, &w, &b, &mut out3);
+        let output3 = relu(&mut out3);
+        let value1 = [2.0, 3.0, 4.0];
+        let value2 = [5.0,6.0,7.0];
+        let value3 = [0.0,0.0,0.0];
+        let mut x4 = [1.0,0.0,-4.0];
+        let out4 = relu(&mut x4);
+        let value4 = [1.0,0.0,0.0];
+        assert_eq!(out1, value1);
+        assert_eq!(out2, value2);
+        assert_eq!(output3, value3);
+        assert_eq!(out4, value4);
     }
 
     // preprocessを通さず、24本beamsでexpert単体の挙動を確認
