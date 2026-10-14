@@ -232,10 +232,10 @@ mod tests {
     fn test_dense(){
         let w = [1.0,2.0,3.0, 4.0, 5.0,6.0];
         let b = [1.0f32;3];
-        let x = [1.0f32;2];
+        let x = [1.0,0.0];
         let mut out = [0.0f32;3];
         dense(&x, &w, &b, &mut out);
-        let value = [6.0, 8.0, 10.0];
+        let value = [2.0, 3.0, 4.0];
         assert_eq!(out, value);
     }
 

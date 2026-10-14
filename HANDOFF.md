@@ -171,7 +171,13 @@
       **2026-10-12夜の進捗**: 重みの書き出しまで完了。`trainer`の`extract()`が`model-49.bpk`を読み、10個の`Vec<f32>`（l1/l2/out1〜3の重みとバイアス）を返す。`bin/extract.rs`が`crates/policy/src/weights.rs`に`pub const L1_W: [f32; 3072]`などとして書き出し、`policy`の`mod weights;`で`cargo build -p policy`が通った。
       構造は 24→128→ReLU→128→ReLU→3つの頭（out1: 128→9 angular、out2: 128→3 mode、out3: 128→1 linear）。重みは`[入力, 出力]`、平坦化は`w[i*O + j]`の想定（**テストで要確認**）。
       **ハマり**: `policy`の`Cargo.toml`に`trainer`/`burn`を足すと循環依存になる（`trainer`→`policy`）。`policy`は依存ゼロ・`no_std`のまま保つ。重みの生成は`trainer`側、生成物のファイルだけ`policy`に置く。
-      **次（サブPCでもできる）**: `policy`に`dense`（1層）・ReLU・3層の推論を書き、小さな数の例（I=2, O=2, w=[1,2,3,4], b=[0,0], x=[1,1] → [4,6]）でテスト→Burnの出力との突き合わせ→`policy_node`に切り替え→Gazebo。基準値（test.csvの1行の入力と各頭の出力）は元のPCで取る。
+      **2026-10-15の進捗**: `policy`に`dense(x, w, b, out)`（`out`に足し込む作り。`w[j*out_size + i]`、j＝入力・i＝出力）・`relu(&mut [f32])`・`forward(x) -> ([f32;9],[f32;3],[f32;1])`を実装し、`4b11a80`でコミット・push済み。
+      構造はtrainerの`Model::forward`と一致（l1→ReLU→l2→ReLU→3つの頭。推論時のdropoutは何もしないので`policy`には無い）。**float推論の実測確認はまだ**。
+      **学び（`dense`のテスト）**: `x`が全部同じ値（`[1,1]`）だと入力の順序の取り違えに気づけない。`x`を非対称にする（`x=[1,0]`・`[0,1]`）と「どの入力がどの重みに掛かるか」が分かる。
+      `w=[1,2,3,4,5,6]`（`I=2,O=3`）は`[入力,出力]`の行優先＝入力0の行`[1,2,3]`・入力1の行`[4,5,6]`。`b=[1,1,1]`・`x=[1,0]`の期待値は`[2,3,4]`（`[2,4,6]`は`[出力,入力]`と読み違えた値）、`x=[0,1]`なら`[5,6,7]`。
+      **次（サブPCでもできる）**: ①`policy`のテストを足す（`dense`の非対称な`x`、`relu`、手作りの小さな2層）→`cargo test -p policy`。未コミット: `crates/policy/src/lib.rs`（`test_dense`を非対称な`x`に変更中）。
+      ②Burnの出力との突き合わせ（**元のPC**）: `trainer`に比較用bin（例`bin/compare.rs`）を作り、test.csv全314行で`Model::forward`と`policy::forward`を比べる（`normalize_beam`後の24個を同じ入力にする）。見るのは差の最大値（目安`1e-4`以下。f32の足し算の順序が違うのでビット一致は期待しない）とargmax一致数（angular・modeとも314/314が期待）。ずれたら層ごと（l1・l2・頭）に比べて切り分ける。サブPCで続けるなら、参照値を3〜5行分だけ定数にしてテストに埋め込む。
+      ③`policy_node`に切り替え→Gazebo（元のPC）。
       **サブPCの注意（GPUとメモリ）**: サブPCはAMD内蔵GPUのみ。`policy`（`no_std`・burn非依存）の実装とテストはCPUだけで動くのでGPU不要。
       `trainer`は`Device::wgpu(..)`固定（`extract`・`train`・`eval`・`batch`）で、元のPC（Quadro T1000）では動いたが、サブPC（WSL2）では動くか未確認（デバイス未検出でpanicする恐れ）。
       学習・`extract`・基準値の取得は元のPCで行い、サブPCは`policy`に集中する。サブPCで`trainer`を動かす必要が出たら、`burn`のfeaturesを`ndarray`（CPU）に切り替える案（MLPが小さいのでCPUで数秒〜数十秒）。
