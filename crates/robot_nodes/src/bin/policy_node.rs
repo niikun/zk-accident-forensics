@@ -1,6 +1,6 @@
 //! /scan を購読し、方策の出力を /cmd_vel に出す。
 use anyhow::Result;
-use policy::{expert, preprocess_beams, Action};
+use policy::{Action, predict};
 use rclrs::*;
 use ros_env::*;
 
@@ -13,15 +13,15 @@ fn main() -> Result<()> {
     let _scan_sub = node.create_subscription::<sensor_msgs::msg::LaserScan, _>(
         "scan",
         move |scan: sensor_msgs::msg::LaserScan| {
-            let a = match preprocess_beams(&scan.ranges) {
-                Ok(beams) => expert(&beams),
-                Err(e) => {
-                    eprintln!("preprocess failed : {e}");
-                    Action {
-                        linear: 0.0,
-                        angular: 0.0,
-                    }
-                }
+            let a = match <&[f32;360]>::try_from(scan.ranges.as_slice()) {
+                Ok(ranges) => {
+                    predict(ranges)
+                    
+                },
+                Err(_) => {
+                    eprintln!("beam_rages not 360");
+                    Action{linear:0.0, angular:0.0}
+                } 
             };
             let mut twist = geometry_msgs::msg::Twist::default();
             twist.linear.x = a.linear as f64;

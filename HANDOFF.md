@@ -192,7 +192,11 @@
           **学び**: `f32::clamp`は`NaN`を渡すと`NaN`を返す（今は`preprocess_beams`が`NaN`を0にするので来ない）。`match`の後ろに`;`を付けると関数が`()`を返してしまう。型の注釈は`name: Type`（コロン1つ）。
           **残り（次回）**: ⬜`speed_mode_to_linear`のテストを足す（Max→`VMAX`・Stop→0・Slow: `-0.1→0.0`・`0.1→0.1`・`1.0→VMAX`。今は`Slow`に10.0を渡して`VMAX`の1件だけ）
           ⬜**24本を受けて`Action`を返す関数**を`policy`に作る（`forward`→out1のargmax→`class_to_angular`→out2のargmax→`from_mode`→`speed_mode_to_linear`。argmaxは小さな関数にして`>`/`>=`を揃える）。`test_policy.rs`はそれを呼び、`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`を戻す（今はコメントアウトで、何が壊れても通る）
-          ⬜`policy_node`を切り替える→Gazebo（元のPC）→動画。⬜警告の整理（`lib.rs`の未使用`hash::Hash`・`L2_W`、`test_policy.rs`の未使用`cmp::max`・`angular_to_class`・`linear_match`）と`cargo fmt`
+          ✅ **学習した方策がGazeboで走った**（2026-10-16）: `policy`に`predict(&[f32; 360]) -> Action`（前処理→`normalize_beam`→`forward`→argmax→`from_mode`→`speed_mode_to_linear`。失敗は let-else で停止指令）を作り、`policy_node`を`expert()`から`predict`に切り替えた。`cargo test -p policy`は13件＋統合1件通過。
+          偽スキャンの疎通: 遠い→直進寄り・前方ふさがれ（`ranges[0]`だけ0.3）→`angular` π/4（`expert()`はπ/6で1クラス隣）・4本のみ→停止(0,0)でノードは落ちない。Gazeboの閉ループで**うまく走った**（壁にぶつからず走行）。
+          `expert()`版は`policy_node_expert.rs`として残した（追加デモ収集・比較用）。ノードの`try_from`は`<&[f32;360]>::try_from(scan.ranges.as_slice())`（`scan.ranges`を忘れると`LaserScan`に`as_slice`が無いエラー。`intensities`と取り違えない）。
+          **学び**: `unwrap_or(return ..)`は引数が先に評価されるので毎回`return`する（let-elseかmatchを使う）。`match`の枝に`;`を付けると値が`()`になる。
+          ⬜**動画（合格ライン）を撮る**（通常走行Aを1分ほど。画面録画の方法を決める）。⬜`policy_node`のエラーメッセージ（`beam_rages`→`ranges`）と`scan.ranges.len()`の表示。⬜`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`を統合テストに戻す。⬜警告の整理（`lib.rs`の未使用`hash::Hash`・`L2_W`、`test_policy.rs`の未使用`cmp::max`・`angular_to_class`・`linear_match`）と`cargo fmt`
           ただし外れの多くは隣のクラス（±1クラス以内が93.3%）。停止の行を除いたangularは64.2%（257行）。**走行には進む**（困ったら学習に戻る）
         - 残り（サブPC）: `mode_match`も表示、`assert_eq!(class_match, 218)`・`assert_eq!(mode_match, 306)`で回帰テストにする、`linear_match`・`use std::cmp::max`（未使用）を整理、argmaxを関数にして`>`/`>=`を揃える、`cargo fmt`→コミット
         - 実行: `pixi run cargo test -p policy --test test_policy -- --nocapture`

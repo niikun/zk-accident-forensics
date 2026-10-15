@@ -245,6 +245,46 @@ pub fn forward(x:&[f32]) -> ([f32;9], [f32;3], [f32;1]) {
     (out1, out2, out3)
 }
 
+pub fn predict(beams_raw:&[f32;NUM_RANGES_RAW]) -> Action {
+    let Ok(beams) = preprocess_beams(beams_raw) else {
+        return Action{linear:0.0, angular:0.0};
+    };
+    let mut beams_normalized = [0.0;NUM_BEAMS];
+    for i in 0..NUM_BEAMS {
+        beams_normalized[i] = normalize_beam(&beams[i]);
+    }
+    let (out1,out2,out3) = forward(&beams_normalized);
+    let mut max_class_num = f32::NEG_INFINITY;
+    let mut class_pred:usize = 0;
+    for (m, o1) in out1.iter().enumerate(){
+        if *o1 > max_class_num {
+            class_pred = m;
+            max_class_num = *o1;
+        }
+    }
+    let Ok(angular_pred) = class_to_angular(class_pred) else {
+        return Action{linear:0.0, angular:0.0};
+    };
+    let mut max_mode_num = f32::NEG_INFINITY;
+    let mut mode_pred:usize = 0;
+    for (n, o2) in out2.iter().enumerate(){
+        if *o2 >= max_mode_num{
+            mode_pred = n;
+            max_mode_num = *o2;
+        }
+    }
+    let Ok(speed_mode) = SpeedMode::from_mode(mode_pred) else {
+        return Action{linear:0.0, angular:0.0};
+    };
+    let linear_pred = speed_mode_to_linear(speed_mode, out3[0]);
+
+    let action = Action{
+        linear:linear_pred,
+        angular:angular_pred
+    };
+    action
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +517,17 @@ mod tests {
         let linear_pred3 = speed_mode_to_linear(speed_mode3, linear3);
         assert_eq!(linear_pred3, 0.0);
     }
+    #[test]
+    fn test_predict() {
+        let beams_raw1 = [5.0; NUM_RANGES_RAW];
+        let predict1 = predict(&beams_raw1);
+        let expected1 = Action{linear:VMAX, angular:0.0};
+        assert_eq!(predict1, expected1);
+        let beams_raw2 = [0.0; NUM_RANGES_RAW];
+        let predict2 = predict(&beams_raw2);
+        let expected2 = Action{linear:0.0, angular:W_MAX};
+        assert_eq!(predict2, expected2);
     }
+}
 
 
