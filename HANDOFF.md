@@ -167,7 +167,7 @@
       - **hidden_sizeは上げない**（容量ではなく学習の設定の問題だった）。むしろSP1の証明コストのため小さくしたい（24→128→128→9で約20,900乗算、64なら約6,200）。精度が出るなら64を試す
       - Validが Trainより高いのはdropout（学習中だけ効く）のため。Valid損失がエポック34で最小→その後上昇は軽い過学習の始まり。最終モデルはエポック50（損失最小のエポック34はチェックポイントに残る）
       - **この精度はangular 9クラス全体の正解率**。停止の再現率はまだ測っていない。モデルはまだ`linear`もmodeも出さないので、**これだけでは走らせられない**
-    - **学習の到達点（2026-10-12）**: 入力を1 mで打ち切る正規化（`policy::normalize_beam`）＋λ=10で、**modeの正解率97.5%・停止の再現率89.5%（51/57）・停止を全速と間違える危険な誤り0件**・減速（予測）のMSE 0.00193。angularはValid約81%。詳細は6章5-5の4「評価の結果と正規化の発見」。**走行に進んでよい水準と判断**（残りの改善は走らせて困ったら戻る）。
+    - **学習の到達点（2026-10-12）**: 入力を1 mで打ち切る正規化（`policy::normalize_beam`）＋λ=10で、**modeの正解率97.5%・停止の再現率89.5%（51/57）・停止を全速と間違える危険な誤り0件**・減速（予測）のMSE 0.00193。angularはValid約81%（**学習中の画面の値。2026-10-15の実測は69.4%、6章へ**）。詳細は6章5-5の4「評価の結果と正規化の発見」。**走行に進んでよい水準と判断**（残りの改善は走らせて困ったら戻る）。
       **2026-10-12夜の進捗**: 重みの書き出しまで完了。`trainer`の`extract()`が`model-49.bpk`を読み、10個の`Vec<f32>`（l1/l2/out1〜3の重みとバイアス）を返す。`bin/extract.rs`が`crates/policy/src/weights.rs`に`pub const L1_W: [f32; 3072]`などとして書き出し、`policy`の`mod weights;`で`cargo build -p policy`が通った。
       構造は 24→128→ReLU→128→ReLU→3つの頭（out1: 128→9 angular、out2: 128→3 mode、out3: 128→1 linear）。重みは`[入力, 出力]`、平坦化は`w[i*O + j]`の想定（**テストで要確認**）。
       **ハマり**: `policy`の`Cargo.toml`に`trainer`/`burn`を足すと循環依存になる（`trainer`→`policy`）。`policy`は依存ゼロ・`no_std`のまま保つ。重みの生成は`trainer`側、生成物のファイルだけ`policy`に置く。
@@ -178,13 +178,18 @@
       **次（サブPCでもできる）**: ①✅（2026-10-15、サブPC、未コミット）`test_dense`に`x=[1,0]`→`[2,3,4]`・`x=[0,1]`→`[5,6,7]`、`relu`を全部負（→0）と正・0・負の混在（`[1,0,-4]`→`[1,0,0]`）で確認、通過。
       **学び**: 全部負の入力だけでは「何でも0にする`relu`」でも通る。正が残ることも確かめる。
       ②'（サブPCでできる代わりの確認）: `crates/policy/tests/`の統合テストで`datas/test.csv`の314行に`normalize_beam`→`forward`をかけ、argmaxを`class`・`mode`列と比べる（evalの約81%・97.5%に近ければ重みの並びは正しい）。`tests/`は別crateなので`std`が使え、`policy`の依存ゼロ・`no_std`を保てる。
-        - **作業中**（2026-10-15、サブPC、未コミット）: `crates/policy/tests/test_policy.rs`を作成。CSVを読んで1行目を表示する段階で、**まだコンパイルが通らない**。
-          残り: `crates/policy/Cargo.toml`に`[dev-dependencies]`で`csv`を足す（本体には入らないので`no_std`・依存ゼロは保てる）、関数に`#[test]`を付ける、`reader.records`→`records()`と`Result`の取り出し、未使用の`use std::fs::File`を消す。
-          その後 1行→`normalize_beam`→`forward`→argmax→集計の順に足す。modeの添字の対応（Max=0/Slow=1/Stop=2）とf32のargmaxの書き方は要確認
+        - ✅ **②'完了**（2026-10-15、サブPC。`test_policy.rs`は**未コミット**）: `crates/policy/tests/test_policy.rs`（`csv`は`[dev-dependencies]`）でtest.csvの314行に`normalize_beam`→`forward`→argmax。
+          **angular 218/314（69.4%）・mode 306/314（97.5%）**。Claudeがnumpyで`weights.rs`から独立に計算しても同じ数字。
+          modeの混同行列`[[182,1,0],[1,73,0],[0,6,51]]`（行＝真 全速/減速/停止）は**`eval.rs`（Burn）の結果と完全に一致**（停止の再現率51/57・停止→減速6・危険な誤り0）＝**`policy::forward`はBurnを再現している**。
+          l1かl2を転置するとangular 8〜28%・mode 12〜58%に崩れる＝重みの並び`w[j*O+i]`は正しい
+        - **angularの「約81%」は基準として誤りだった**: 学習中の画面のValid精度で、`eval.rs`はangularを測っていない。このモデル（`model-49.bpk`）の実測は69.4%の見込み。
+          ただし外れの多くは隣のクラス（±1クラス以内が93.3%）。停止の行を除いたangularは64.2%（257行）。**走行には進む**（困ったら学習に戻る）
+        - 残り（サブPC）: `mode_match`も表示、`assert_eq!(class_match, 218)`・`assert_eq!(mode_match, 306)`で回帰テストにする、`linear_match`・`use std::cmp::max`（未使用）を整理、argmaxを関数にして`>`/`>=`を揃える、`cargo fmt`→コミット
         - 実行: `pixi run cargo test -p policy --test test_policy -- --nocapture`
-        - **学び**: `tests/`の統合テストは`cargo run`ではなく`cargo test --test <ファイル名>`で動かす（`policy`はライブラリでbinが無い）。`#[test]`の無い関数は呼ばれない。成功したテストの`println!`は`-- --nocapture`が無いと隠れる
-        - `lib.rs`に未使用の`use crate::weights::L2_W;`の警告あり（`forward`は`weights::L2_W`で参照）
-      ②Burnの出力との突き合わせ（**元のPC**）: `trainer`に比較用bin（例`bin/compare.rs`）を作り、test.csv全314行で`Model::forward`と`policy::forward`を比べる（`normalize_beam`後の24個を同じ入力にする）。見るのは差の最大値（目安`1e-4`以下。f32の足し算の順序が違うのでビット一致は期待しない）とargmax一致数（angular・modeとも314/314が期待）。ずれたら層ごと（l1・l2・頭）に比べて切り分ける。サブPCで続けるなら、参照値を3〜5行分だけ定数にしてテストに埋め込む。
+        - **学び**: `tests/`の統合テストは`cargo run`ではなく`cargo test --test <ファイル名>`で動かす（`policy`はライブラリでbinが無い。`--test`はターゲットの選択で、無いと後ろの名前は**テスト関数名のフィルタ**になり`filtered out`で0件）。`--nocapture`は`--`の後ろ。`#[test]`の無い関数は呼ばれない。
+          CSVの列は添字0が`run`なので`b0..b23`は1〜24・class 25・mode 26・linear 27。argmaxは最大値も更新する（しないと常に最後の添字＝class 8が89件で28%に見えた）。ループ内で`beams[0]`と固定しない。1行に1つの値は`Vec<usize>`で持つ
+        - `lib.rs`に未使用の`use`（`hash::Hash`・`crate::weights::L2_W`）の警告あり
+      ②Burnの出力との突き合わせ（**元のPC**。②'でmodeは一致を確認済みなので、**最低限は`eval.rs`にangularの`outputs.0.argmax(1)`の一致数を足し、218/314になるか見るだけでよい**）: `trainer`に比較用bin（例`bin/compare.rs`）を作り、test.csv全314行で`Model::forward`と`policy::forward`を比べる（`normalize_beam`後の24個を同じ入力にする）。見るのは差の最大値（目安`1e-4`以下。f32の足し算の順序が違うのでビット一致は期待しない）とargmax一致数（angular・modeとも314/314が期待）。ずれたら層ごと（l1・l2・頭）に比べて切り分ける。サブPCで続けるなら、参照値を3〜5行分だけ定数にしてテストに埋め込む。
       ③`policy_node`に切り替え→Gazebo（元のPC）。
       **サブPCの注意（GPUとメモリ）**: サブPCはAMD内蔵GPUのみ。`policy`（`no_std`・burn非依存）の実装とテストはCPUだけで動くのでGPU不要。
       `trainer`は`Device::wgpu(..)`固定（`extract`・`train`・`eval`・`batch`）で、元のPC（Quadro T1000）では動いたが、サブPC（WSL2）では動くか未確認（デバイス未検出でpanicする恐れ）。
