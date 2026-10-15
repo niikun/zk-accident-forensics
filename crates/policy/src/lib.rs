@@ -46,6 +46,26 @@ pub enum SpeedMode {
     Stop,
 }
 
+impl SpeedMode {
+    pub fn from_mode(mode:usize) -> Result<SpeedMode, & 'static str> {
+        let speed_mode:Result<SpeedMode,&'static str> = match mode{
+            0 => {Ok(SpeedMode::Max)},
+            1 => {Ok(SpeedMode::Slow)},
+            2 => {Ok(SpeedMode::Stop)},
+            _ => {Err("speed mode must be 0-2")}
+        } ;
+        speed_mode
+    }
+}
+
+pub fn speed_mode_to_linear(speed_mode:SpeedMode,linear_pred:f32)->f32{
+    match speed_mode {
+        SpeedMode::Max => {VMAX},
+        SpeedMode::Stop => {0.0},
+        SpeedMode::Slow => {linear_pred.clamp(0.0, VMAX)}
+    }
+}
+
 /// 入力の並び（ranges[0]が正面、左回り、1度刻み、360本)
 /// RANGE_MAXは10.0で設定。front は353度～7度までで設定
 /// 置き換えの規則（+inf→RANGE_MAX、-inf→0、NaN→0、区間の最小値）
@@ -438,4 +458,25 @@ mod tests {
         assert_eq!(b4, 1.0);
         assert_eq!(b5, 1.0);
     }
-}
+
+    #[test]
+    fn test_speed_mode_to_linear(){
+        let speed_mode1 = SpeedMode::Slow;
+        let linear1 = 10.0;
+        let linear_pred1 = speed_mode_to_linear(speed_mode1, linear1);
+        assert_eq!(linear_pred1, VMAX);
+
+        let speed_mode2 = SpeedMode::Max;
+        let linear2 = -10.0;
+        let linear_pred2 = speed_mode_to_linear(speed_mode2, linear2);
+        assert_eq!(linear_pred2, VMAX);
+
+        
+        let speed_mode3 = SpeedMode::Stop;
+        let linear3 = 10.0;
+        let linear_pred3 = speed_mode_to_linear(speed_mode3, linear3);
+        assert_eq!(linear_pred3, 0.0);
+    }
+    }
+
+

@@ -182,7 +182,17 @@
           **angular 218/314（69.4%）・mode 306/314（97.5%）**。Claudeがnumpyで`weights.rs`から独立に計算しても同じ数字。
           modeの混同行列`[[182,1,0],[1,73,0],[0,6,51]]`（行＝真 全速/減速/停止）は**`eval.rs`（Burn）の結果と完全に一致**（停止の再現率51/57・停止→減速6・危険な誤り0）＝**`policy::forward`はBurnを再現している**。
           l1かl2を転置するとangular 8〜28%・mode 12〜58%に崩れる＝重みの並び`w[j*O+i]`は正しい
-        - **angularの「約81%」は基準として誤りだった**: 学習中の画面のValid精度で、`eval.rs`はangularを測っていない。このモデル（`model-49.bpk`）の実測は69.4%の見込み。
+        - **angularが81%→69.4%に見えたのは、エポックの選び方の問題で、退化ではない**（2026-10-15、`datas/artifact/valid/epoch-N/Accuracy.log`を集計して確認）: validはtest.csvの314行。angularの正解数はエポックで大きく揺れる（epoch 46＝255/314＝**81.2%**が最高、47＝75.2%、48＝76.8%、**49＝218/314＝69.4%**、50＝245/314＝78.0%）。
+          `extract.rs`が読む`model-49.bpk`はepoch 49で、Burn自身のログが218/314。`policy`の218/314と**一致**＝`policy::forward`はBurnのangularも再現している（modeの混同行列もeval.rsと一致）。
+          **選択肢**: ①epoch 50（78.0%。`model.bpk`と同じ最終モデル、おすすめ）②epoch 46（81.2%。ただしvalid＝testなので選択が楽観的。レポートでは「validで選んだ」と書く）③今のまま走る（±1クラス以内が93.3%）。切り替えたら、modeの混同行列（危険な誤り0件）を`test_policy.rs`で見直す（mode指標97.5%・停止の再現率89.5%はepoch 49のもの）。分けたtestセットは無い。
+          ✅ **epoch 50を採用した**（2026-10-15）: `extract`の読み込み先を`model-50.bpk`にして`weights.rs`を作り直した。`test_policy.rs`は**angular 245/314（78.0%）・mode 307/314（97.8%）**で、Burnの`eval.rs`と一致＝`policy::forward`はepoch 50のBurnを再現している。
+          `eval.rs`（Burn、epoch 50）のmode混同行列（行＝真 全速/減速/停止）は`[[183,0,0],[3,71,0],[0,4,53]]`。**停止の再現率53/57＝93.0%（epoch 49は89.5%）・停止→全速（危険な誤り）0件**・停止→減速4・減速→停止0・**減速→全速3**（epoch 49は1）。減速（予測）のMSE 0.002877（epoch 49は0.00193。減速の行の平均を答えるMSE 0.00158より悪い→走行で減速が不自然なら`linear`の頭を疑う）。
+          走行では、減速帯（0.25〜0.5 m）で全速のまま壁に近づきすぎないかを動画で見る。
+        - **出力の解釈を`policy`に入れた**（2026-10-15、**未コミット**）: `SpeedMode::from_mode(usize) -> Result<SpeedMode, &'static str>`（0=Max・1=Slow・2=Stop、それ以外は`Err`）と`speed_mode_to_linear(SpeedMode, f32) -> f32`（Max→`VMAX`・Stop→0.0・Slow→回帰値を`clamp(0.0, VMAX)`）。ビルドは通る。
+          **学び**: `f32::clamp`は`NaN`を渡すと`NaN`を返す（今は`preprocess_beams`が`NaN`を0にするので来ない）。`match`の後ろに`;`を付けると関数が`()`を返してしまう。型の注釈は`name: Type`（コロン1つ）。
+          **残り（次回）**: ⬜`speed_mode_to_linear`のテストを足す（Max→`VMAX`・Stop→0・Slow: `-0.1→0.0`・`0.1→0.1`・`1.0→VMAX`。今は`Slow`に10.0を渡して`VMAX`の1件だけ）
+          ⬜**24本を受けて`Action`を返す関数**を`policy`に作る（`forward`→out1のargmax→`class_to_angular`→out2のargmax→`from_mode`→`speed_mode_to_linear`。argmaxは小さな関数にして`>`/`>=`を揃える）。`test_policy.rs`はそれを呼び、`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`を戻す（今はコメントアウトで、何が壊れても通る）
+          ⬜`policy_node`を切り替える→Gazebo（元のPC）→動画。⬜警告の整理（`lib.rs`の未使用`hash::Hash`・`L2_W`、`test_policy.rs`の未使用`cmp::max`・`angular_to_class`・`linear_match`）と`cargo fmt`
           ただし外れの多くは隣のクラス（±1クラス以内が93.3%）。停止の行を除いたangularは64.2%（257行）。**走行には進む**（困ったら学習に戻る）
         - 残り（サブPC）: `mode_match`も表示、`assert_eq!(class_match, 218)`・`assert_eq!(mode_match, 306)`で回帰テストにする、`linear_match`・`use std::cmp::max`（未使用）を整理、argmaxを関数にして`>`/`>=`を揃える、`cargo fmt`→コミット
         - 実行: `pixi run cargo test -p policy --test test_policy -- --nocapture`

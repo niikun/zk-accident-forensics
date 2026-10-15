@@ -1,6 +1,6 @@
-use std::cmp::max;
+use std::{cmp::max, fmt::Error};
 
-use policy::{normalize_beam, forward};
+use policy::{Action, SpeedMode, angular_to_class, class_to_angular, forward, normalize_beam, speed_mode_to_linear};
 
 #[test]    
 fn read_csv_and_forward(){
@@ -12,6 +12,7 @@ fn read_csv_and_forward(){
     let mut classes:Vec<usize> = Vec::new();
     let mut modes: Vec<usize> = Vec::new();
     let mut linears: Vec<f32> = Vec::new();
+    let mut actions:Vec<Action> = Vec::new();
     for record in reader.records(){
         let mut beam:Vec<f32> = Vec::new();
         for (i, r) in record.unwrap().iter().enumerate() {
@@ -42,6 +43,7 @@ fn read_csv_and_forward(){
                 max_class_num = *o1;
             }
         }
+        let angular_pred = class_to_angular(class_pred).expect("can not convert class to angular");
         let mut max_mode_num = f32::NEG_INFINITY;
         let mut mode_pred:usize = 0;
         for (n, o2) in out2.iter().enumerate(){
@@ -50,6 +52,8 @@ fn read_csv_and_forward(){
                 max_mode_num = *o2;
             }
         }
+        let speed_mode:SpeedMode = SpeedMode::from_mode(mode_pred).expect("can not convert mode to speedmode");
+        let linear_pred = speed_mode_to_linear(speed_mode, out3[0]);
         if class_pred == classes[i]{
             class_match += 1;
         }
@@ -57,8 +61,17 @@ fn read_csv_and_forward(){
         if mode_pred == modes[i]{
             mode_match += 1;
         }
+        let action = Action{
+            linear:linear_pred,
+            angular:angular_pred
+        };
+        actions.push(action);
+
     }
-    println!("class_match: {:?}/ {:?} : rate {:?}", class_match, beams.len(), class_match as f32 / beams.len() as f32); 
-        
+    assert_eq!(class_match, 245);
+    assert_eq!(mode_match, 307);
+    println!("{:?}",actions);
 }
+
+
 

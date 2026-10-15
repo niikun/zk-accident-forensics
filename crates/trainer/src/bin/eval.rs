@@ -13,7 +13,7 @@ fn main() {
     let batch = Batcher::batch(&batcher, test_items.clone(), &device);
     let model_config = ModelConfig::new(9, 3, 128);
     let model = model_config.init(&device);
-    let model_path = Path::new("datas/artifact/checkpoint/model-49.bpk");
+    let model_path = Path::new("datas/artifact/checkpoint/model-50.bpk");
     let model = model.load_file(model_path);
     let outputs = model.forward(batch);
 

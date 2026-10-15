@@ -186,7 +186,7 @@ impl InferenceStep for Model {
 }
 
 pub fn extract() -> [Vec<f32>; 10] {
-    let model_path = Path::new("datas/artifact/checkpoint/model-49.bpk");
+    let model_path = Path::new("datas/artifact/checkpoint/model-50.bpk");
     let record = ModuleRecord::load(model_path)
         .expect("Should be able to load the model weights from the provided file");
     let device = Device::wgpu(Default::default());
