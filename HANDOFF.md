@@ -1,6 +1,6 @@
 # HANDOFF — zk_accident_forensics
 
-最終更新: 2026-10-15
+最終更新: 2026-10-16
 このリポジトリで作業を始めるセッション向けの引き継ぎ。まずこのファイルを読むこと。
 
 ## 0. 進め方の原則（最優先）
@@ -167,7 +167,7 @@
       - **hidden_sizeは上げない**（容量ではなく学習の設定の問題だった）。むしろSP1の証明コストのため小さくしたい（24→128→128→9で約20,900乗算、64なら約6,200）。精度が出るなら64を試す
       - Validが Trainより高いのはdropout（学習中だけ効く）のため。Valid損失がエポック34で最小→その後上昇は軽い過学習の始まり。最終モデルはエポック50（損失最小のエポック34はチェックポイントに残る）
       - **この精度はangular 9クラス全体の正解率**。停止の再現率はまだ測っていない。モデルはまだ`linear`もmodeも出さないので、**これだけでは走らせられない**
-    - **学習の到達点（2026-10-12）**: 入力を1 mで打ち切る正規化（`policy::normalize_beam`）＋λ=10で、**modeの正解率97.5%・停止の再現率89.5%（51/57）・停止を全速と間違える危険な誤り0件**・減速（予測）のMSE 0.00193。angularはValid約81%（**学習中の画面の値。2026-10-15の実測は69.4%、6章へ**）。詳細は6章5-5の4「評価の結果と正規化の発見」。**走行に進んでよい水準と判断**（残りの改善は走らせて困ったら戻る）。
+    - **学習の到達点（2026-10-12）**: 入力を1 mで打ち切る正規化（`policy::normalize_beam`）＋λ=10で、**modeの正解率97.5%・停止の再現率89.5%（51/57）・停止を全速と間違える危険な誤り0件**・減速（予測）のMSE 0.00193。angularはValid約81%（**学習中の画面の値で、エポックで揺れる。採用したepoch 50の実測は78.0%（245/314）・mode 97.8%・停止の再現率93.0%・危険な誤り0件**（2026-10-15、下の②'））。詳細は6章5-5の4「評価の結果と正規化の発見」。**走行に進んでよい水準と判断**（残りの改善は走らせて困ったら戻る）。
       **2026-10-12夜の進捗**: 重みの書き出しまで完了。`trainer`の`extract()`が`model-49.bpk`を読み、10個の`Vec<f32>`（l1/l2/out1〜3の重みとバイアス）を返す。`bin/extract.rs`が`crates/policy/src/weights.rs`に`pub const L1_W: [f32; 3072]`などとして書き出し、`policy`の`mod weights;`で`cargo build -p policy`が通った。
       構造は 24→128→ReLU→128→ReLU→3つの頭（out1: 128→9 angular、out2: 128→3 mode、out3: 128→1 linear）。重みは`[入力, 出力]`、平坦化は`w[i*O + j]`の想定（**テストで要確認**）。
       **ハマり**: `policy`の`Cargo.toml`に`trainer`/`burn`を足すと循環依存になる（`trainer`→`policy`）。`policy`は依存ゼロ・`no_std`のまま保つ。重みの生成は`trainer`側、生成物のファイルだけ`policy`に置く。
@@ -188,23 +188,23 @@
           ✅ **epoch 50を採用した**（2026-10-15）: `extract`の読み込み先を`model-50.bpk`にして`weights.rs`を作り直した。`test_policy.rs`は**angular 245/314（78.0%）・mode 307/314（97.8%）**で、Burnの`eval.rs`と一致＝`policy::forward`はepoch 50のBurnを再現している。
           `eval.rs`（Burn、epoch 50）のmode混同行列（行＝真 全速/減速/停止）は`[[183,0,0],[3,71,0],[0,4,53]]`。**停止の再現率53/57＝93.0%（epoch 49は89.5%）・停止→全速（危険な誤り）0件**・停止→減速4・減速→停止0・**減速→全速3**（epoch 49は1）。減速（予測）のMSE 0.002877（epoch 49は0.00193。減速の行の平均を答えるMSE 0.00158より悪い→走行で減速が不自然なら`linear`の頭を疑う）。
           走行では、減速帯（0.25〜0.5 m）で全速のまま壁に近づきすぎないかを動画で見る。
-        - **出力の解釈を`policy`に入れた**（2026-10-15、**未コミット**）: `SpeedMode::from_mode(usize) -> Result<SpeedMode, &'static str>`（0=Max・1=Slow・2=Stop、それ以外は`Err`）と`speed_mode_to_linear(SpeedMode, f32) -> f32`（Max→`VMAX`・Stop→0.0・Slow→回帰値を`clamp(0.0, VMAX)`）。ビルドは通る。
+        - **出力の解釈を`policy`に入れた**（2026-10-15、`16ba6ce`でコミット済み）: `SpeedMode::from_mode(usize) -> Result<SpeedMode, &'static str>`（0=Max・1=Slow・2=Stop、それ以外は`Err`）と`speed_mode_to_linear(SpeedMode, f32) -> f32`（Max→`VMAX`・Stop→0.0・Slow→回帰値を`clamp(0.0, VMAX)`）。ビルドは通る。
           **学び**: `f32::clamp`は`NaN`を渡すと`NaN`を返す（今は`preprocess_beams`が`NaN`を0にするので来ない）。`match`の後ろに`;`を付けると関数が`()`を返してしまう。型の注釈は`name: Type`（コロン1つ）。
           **残り（次回）**: ⬜`speed_mode_to_linear`のテストを足す（Max→`VMAX`・Stop→0・Slow: `-0.1→0.0`・`0.1→0.1`・`1.0→VMAX`。今は`Slow`に10.0を渡して`VMAX`の1件だけ）
-          ⬜**24本を受けて`Action`を返す関数**を`policy`に作る（`forward`→out1のargmax→`class_to_angular`→out2のargmax→`from_mode`→`speed_mode_to_linear`。argmaxは小さな関数にして`>`/`>=`を揃える）。`test_policy.rs`はそれを呼び、`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`を戻す（今はコメントアウトで、何が壊れても通る）
+          ✅（10/16、`predict`として実装。下記）**24本を受けて`Action`を返す関数**を`policy`に作る（`forward`→out1のargmax→`class_to_angular`→out2のargmax→`from_mode`→`speed_mode_to_linear`。argmaxは小さな関数にして`>`/`>=`を揃える）。`test_policy.rs`はそれを呼び、`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`を戻す（今はコメントアウトで、何が壊れても通る）
           ✅ **学習した方策がGazeboで走った**（2026-10-16）: `policy`に`predict(&[f32; 360]) -> Action`（前処理→`normalize_beam`→`forward`→argmax→`from_mode`→`speed_mode_to_linear`。失敗は let-else で停止指令）を作り、`policy_node`を`expert()`から`predict`に切り替えた。`cargo test -p policy`は13件＋統合1件通過。
           偽スキャンの疎通: 遠い→直進寄り・前方ふさがれ（`ranges[0]`だけ0.3）→`angular` π/4（`expert()`はπ/6で1クラス隣）・4本のみ→停止(0,0)でノードは落ちない。Gazeboの閉ループで**うまく走った**（壁にぶつからず走行）。
           `expert()`版は`policy_node_expert.rs`として残した（追加デモ収集・比較用）。ノードの`try_from`は`<&[f32;360]>::try_from(scan.ranges.as_slice())`（`scan.ranges`を忘れると`LaserScan`に`as_slice`が無いエラー。`intensities`と取り違えない）。
           **学び**: `unwrap_or(return ..)`は引数が先に評価されるので毎回`return`する（let-elseかmatchを使う）。`match`の枝に`;`を付けると値が`()`になる。
           ⬜**動画（合格ライン）を撮る**（通常走行Aを1分ほど。画面録画の方法を決める）。⬜`policy_node`のエラーメッセージ（`beam_rages`→`ranges`）と`scan.ranges.len()`の表示。⬜`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`を統合テストに戻す。⬜警告の整理（`lib.rs`の未使用`hash::Hash`・`L2_W`、`test_policy.rs`の未使用`cmp::max`・`angular_to_class`・`linear_match`）と`cargo fmt`
-          ただし外れの多くは隣のクラス（±1クラス以内が93.3%）。停止の行を除いたangularは64.2%（257行）。**走行には進む**（困ったら学習に戻る）
-        - 残り（サブPC）: `mode_match`も表示、`assert_eq!(class_match, 218)`・`assert_eq!(mode_match, 306)`で回帰テストにする、`linear_match`・`use std::cmp::max`（未使用）を整理、argmaxを関数にして`>`/`>=`を揃える、`cargo fmt`→コミット
+          （epoch 49の時点の数字）外れの多くは隣のクラス（±1クラス以内が93.3%）。停止の行を除いたangularは64.2%（257行）。**走行には進む**（困ったら学習に戻る）
+        - （古い。epoch 50に切り替えたので期待値は245/307。最新の残りは上の⬜の行）残り（サブPC）: `mode_match`も表示、`assert_eq!(class_match, 218)`・`assert_eq!(mode_match, 306)`で回帰テストにする、`linear_match`・`use std::cmp::max`（未使用）を整理、argmaxを関数にして`>`/`>=`を揃える、`cargo fmt`→コミット
         - 実行: `pixi run cargo test -p policy --test test_policy -- --nocapture`
         - **学び**: `tests/`の統合テストは`cargo run`ではなく`cargo test --test <ファイル名>`で動かす（`policy`はライブラリでbinが無い。`--test`はターゲットの選択で、無いと後ろの名前は**テスト関数名のフィルタ**になり`filtered out`で0件）。`--nocapture`は`--`の後ろ。`#[test]`の無い関数は呼ばれない。
           CSVの列は添字0が`run`なので`b0..b23`は1〜24・class 25・mode 26・linear 27。argmaxは最大値も更新する（しないと常に最後の添字＝class 8が89件で28%に見えた）。ループ内で`beams[0]`と固定しない。1行に1つの値は`Vec<usize>`で持つ
         - `lib.rs`に未使用の`use`（`hash::Hash`・`crate::weights::L2_W`）の警告あり
-      ②Burnの出力との突き合わせ（**元のPC**。②'でmodeは一致を確認済みなので、**最低限は`eval.rs`にangularの`outputs.0.argmax(1)`の一致数を足し、218/314になるか見るだけでよい**）: `trainer`に比較用bin（例`bin/compare.rs`）を作り、test.csv全314行で`Model::forward`と`policy::forward`を比べる（`normalize_beam`後の24個を同じ入力にする）。見るのは差の最大値（目安`1e-4`以下。f32の足し算の順序が違うのでビット一致は期待しない）とargmax一致数（angular・modeとも314/314が期待）。ずれたら層ごと（l1・l2・頭）に比べて切り分ける。サブPCで続けるなら、参照値を3〜5行分だけ定数にしてテストに埋め込む。
-      ③`policy_node`に切り替え→Gazebo（元のPC）。
+      ②✅（10/15、epoch 50で`eval.rs`と`test_policy.rs`が一致して完了。以下は当時の計画）Burnの出力との突き合わせ（**元のPC**。②'でmodeは一致を確認済みなので、**最低限は`eval.rs`にangularの`outputs.0.argmax(1)`の一致数を足し、218/314になるか見るだけでよい**）: `trainer`に比較用bin（例`bin/compare.rs`）を作り、test.csv全314行で`Model::forward`と`policy::forward`を比べる（`normalize_beam`後の24個を同じ入力にする）。見るのは差の最大値（目安`1e-4`以下。f32の足し算の順序が違うのでビット一致は期待しない）とargmax一致数（angular・modeとも314/314が期待）。ずれたら層ごと（l1・l2・頭）に比べて切り分ける。サブPCで続けるなら、参照値を3〜5行分だけ定数にしてテストに埋め込む。
+      ③✅`policy_node`に切り替え→Gazebo（10/16、`57254f4`。学習した方策で壁にぶつからず走行）。✅動画（合格ライン）も撮影済み（10/16時点。保存場所は未記入）。**次はW3のSP1（サイクル数）→blackbox_node**。
       **サブPCの注意（GPUとメモリ）**: サブPCはAMD内蔵GPUのみ。`policy`（`no_std`・burn非依存）の実装とテストはCPUだけで動くのでGPU不要。
       `trainer`は`Device::wgpu(..)`固定（`extract`・`train`・`eval`・`batch`）で、元のPC（Quadro T1000）では動いたが、サブPC（WSL2）では動くか未確認（デバイス未検出でpanicする恐れ）。
       学習・`extract`・基準値の取得は元のPCで行い、サブPCは`policy`に集中する。サブPCで`trainer`を動かす必要が出たら、`burn`のfeaturesを`ndarray`（CPU）に切り替える案（MLPが小さいのでCPUで数秒〜数十秒）。
@@ -331,7 +331,7 @@ cargo build && cargo test -p policy
 | W4 10/19–25 | S3（事故の主張）、シナリオB/C、検証結果の可視化（✅/❌） |
 | W5 10/26–11/1 | 動画・レポート・README仕上げ、提出 |
 
-## 6. 次にやること（W2。次は5-5の4「Burnの学習用crate」。データ（`datas/train.csv`・`test.csv`）は用意できた）
+## 6. 次にやること（W2は完了＝学習した方策で走行・動画撮影済み。今はW3: SP1でサイクル数の計測（6章末の実験）→`blackbox_node`とSP1のS1+S2）
 
 > **スケジュールの注意（2026-10-09）**: W2の残り（学習・固定小数点化・走行・動画）は10/11までには厳しい。まず**浮動小数点のMLPで走って動画を撮る**（合格ラインの確保）を優先し、固定小数点化はW3の頭に回す案（未決、ユーザーが判断）
 >
@@ -689,6 +689,48 @@ cargo build && cargo test -p policy
   例: お手本では、モデルz=0.325＋chassis 0.175 → chassisはワールドz=0.5。`lidar_link`の0.5もモデル基準なので、ワールドz=0.825（chassis上面0.784の直上）
 - 考えておく問い: `cmd_vel`のトピック名はなぜ`/model/vehicle_blue/...`になるのか。ROSの`/cmd_vel`と、SDFの`<topic>`とbridgeのYAMLのどちらで名前を合わせるか
 
+### SP1で`policy::predict`のサイクル数を測る実験（2026-10-16開始、サブPC）
+
+- 目的: 固定小数点化を飛ばせるかの判断。①guestで`policy`（`no_std`・依存ゼロ）がビルドできるか ②1ステップのサイクル数 ③guestの出力がネイティブの`predict`と**`to_bits()`でビット一致**するか（IEEE-754の四則は丸めが一意なので、演算順が同じなら一致するはず。一致すればf32のままS2が言える）
+- 置き場: **このリポジトリの外** `~/rust/projects/sp1/policy-cycles`（`cargo prove new --bare policy-cycles`。`--evm`は不要）。pixiワークスペースに混ぜない。guestは`policy`をpath依存で使う
+- 構成: guest＝360本を読む→`predict`→`linear`・`angular`を公開出力。host＝固定の入力（全部5.0、`ranges[0]`だけ0.3など）で`execute`→サイクル数表示、同じ入力でネイティブの`predict`と比較。`[f32;360]`はserdeの配列長の制限に注意（`Vec<f32>`で渡す案）
+- **サブPCではexecuteまで**（proveはしない）: 以前`zkml_robotic`でハッシュチェーン46件のproveがピークメモリ約13GB。サブPCは11GB。proveは元のPC
+- 目安: 事故の窓2.5秒×10Hz＝25ステップ。1ステップ数百万サイクル以下ならf32で行ける見込み、数千万以上なら窓を短く・hidden 64を検討
+- 参考: `~/rust/projects/sp1/`に以前の練習（`fibonacci`・`merkle-proof`・`over18`、sp1-zkvm 6.0.1）。データの渡し方・公開出力の書き方は`fibonacci`の`program/src/main.rs`と`script/src/bin/main.rs`
+- 結果（サイクル数・ビット一致したか）はここに記録する
+
+#### 進み具合（2026-10-16夜、サブPC）
+
+- ✅ ステップ0: テンプレートのfibonacciを`cargo run --release -- --execute`で実行 → `Number of cycles: 9620`（fib(20)。大半は入出力・`abi_encode`などの固定コスト）
+- ✅ ステップ1（目的①）: `program/Cargo.toml`に`policy = { path = "../../../zk-accident-forensics/crates/policy" }`を追加し、guestの`main()`で`predict(&[0.0; NUM_RANGES_RAW])`を呼ぶ → **guest（`+succinct`、RISC-V）で`policy`がビルドでき、zkVMで最後まで実行できた**（`Program executed successfully.`）
+  - `policy`の`version.workspace = true`は、cargoがzk-accident-forensicsの`Cargo.toml`を読んで解決する（外からのpath依存で問題なし）
+  - `policy`の`NUM_RANGES_RAW`を`pub`にした（**未コミット**。メインPCで使うならコミット・pushが要る）
+- 未完了: hostはまだfibonacciの`PublicValuesStruct::abi_decode`をしているので、guestが`commit`しない今は`Err(Overrun)`でpanicし、**サイクル数の行まで届かない**。hostのfibonacci用の`abi_decode`〜`assert_eq!`を外す（`total_instruction_count()`は残す）
+- `policy-cycles`は**gitの外でサブPCにしかない**。メインPCでは`cargo prove new --bare policy-cycles`から作り直す（ステップ1は上の2点だけなので再現は数分）
+
+#### 次の手順（メインPCで）
+
+1. ステップ1の仕上げ: hostを直してサイクル数を出す。入力`[0.0; 360]`（全部近い）と`[5.0; 360]`（開けた）で比べる（MLPの計算量は一定のはず。変わるならどこが原因か）
+2. ステップ2: 入力を`Vec<f32>`でhostの`stdin`から渡す（serdeの配列長の制限、`try_into`で`&[f32; 360]`へ）
+3. ステップ3: `predict`だけのサイクル数（SP1の`cycle-tracker-report-start`/`-end`）。固定コストと分ける
+4. ステップ4（目的③）: 公開出力を`to_bits()`で返し、hostのネイティブの`predict`とビット一致を比べる（`Action`だけでなく`forward`の生の出力も比べると強い）
+5. 余裕があれば`--prove`でピークメモリと時間を測る（メインPC 15GB）
+
+#### ハマりどころ（2026-10-16）
+
+- **テンプレートの`Cargo.lock`は`tempfile 3.19.1`**で、`sp1-prover 6.9.0`の`build.rs:623`が呼ぶ`TempDir::keep()`が無い（`error[E0599]: no method named keep`）。`sp1-prover`が`tempfile = "3.10.1"`としか要求しないため古いまま選ばれる。`Cargo.lock`の`tempfile`だけを上げる（`cargo update -p tempfile`、3.27.0で解決）。**メインPCで作り直すと再発する**
+- **`cargo run`（`--release`なし）でWSLごと落ちた**: hostがdebugビルドになり（`target/debug/`が12GB）、rust-analyzerの`cargo check --all-features --all-targets`（テンプレートの`.vscode/settings.json`）と重なってメモリ不足。最初のビルドはrust-analyzerを止め、`cargo run --release -j 4 -- --execute`で。`--execute`なしだと`--execute`/`--prove`の指定エラーで終わる
+- guestのELFは`target/elf-compilation/riscv64im-succinct-zkvm-elf/release/`。`file`で見ると**RV64IM・soft-float ABI**（浮動小数点の命令が無く、f32の四則はソフトウェアの関数呼び出し→f32のMLPのサイクル数が膨らむ理由）
+- guestに`#[cfg(test)]`を書いてもzkVMを通らない（hostのネイティブで動くだけ）。`predict`の性質のテストは`policy`、zkVMとネイティブの比較はhost（`script/`）に置く
+
+#### 設計の論点（2026-10-16に判明、未決）
+
+- **SP1のcore/compressed（STARK）証明はゼロ知識ではない**。公式のsecurity model: "While our implementations of Groth16 and PLONK are zero-knowledge, individual STARK proofs in SP1 do not currently satisfy the zero-knowledge property."（<https://docs.succinct.xyz/docs/sp1/security/security-model>。v6の記述と推測、使っているバージョンで裏取りが要る）。
+  8章の方針（core/compressedまで、Groth16ラップなし）のままだと、「重みも生ログも見せずに」は暗号学的には成り立たない。案: A Groth16/PLONKでラップ（メモリ・時間が要る。PLONKはtrusted setup不要）／B core/compressedのまま、レポートに限界として明記／C 証明を信頼できる相手（裁判所など）にだけ渡す運用（「誰でも検証できる」と衝突）
+- **重みは`weights.rs`の`const`→ELFの`.rodata`に入る**。guestを監査のために公開すると重みも公開される。重みを秘密にするなら、private入力で渡し、重みのハッシュを公開出力にする（「事故のときと同じ重み」を保証するため。生ログとハッシュチェーンの関係と同じ構造）
+- 何を秘密にするか（zkMLの型）: ①モデルを秘密・入出力を公開（＋重みのハッシュ）②入力を秘密・モデルを公開 ③両方を秘密（今のコンセプト）。事故の窓の入出力を公開すると、第三者が「その入力ならexpert()は止まれたか」を自分で確かめられる利点もある。S1〜S3のどれが残るかで選ぶ
+- `stdin`で渡すもの＝検証者に渡さない入力（暗号化ではない。hostと運用者は全部知っている）。`commit`したものだけが公開出力
+
 ### サブPCでROSなしでできること（W3の予習）
 
 - **Hello ZK Robotを動かす**（SP1 SDK 6.0.1、guestは80行、hostは121行）。`~/rust/projects/hello-zk-robot`にcloneする（このリポジトリには混ぜない）
@@ -717,6 +759,7 @@ cargo build && cargo test -p policy
 
 - Gazeboが重い・WSLgで表示できない場合 → Rust製の2Dシミュレータ＋rerunで可視化に切り替える（課題は他ツール可）
 - RAMは元のPCで15GB、サブPCで約12GB（増やせない）。SP1はcore/compressed証明まで。証明する区間は事故前後の数十ステップに絞る。Groth16ラップやオンチェーン検証はやらない
+  - **【2026-10-16】core/compressedはゼロ知識ではない**（6章「SP1で`policy::predict`のサイクル数を測る実験」の「設計の論点」）。この方針を続けるなら、秘匿はレポートで限界として明記する
   - **本番の証明は元のPCで作る**。サブPCは実行（`--execute`）とサイクル数の計測まで。サブPCで証明が必要なら、swapを増やして（例: `swap=16GB`）遅さを受け入れる
   - サブPCでHello ZK Robotの`--prove`が通るかを測り、必要メモリの目安にする
 - 固定小数点化で精度が落ちたら、層を小さくするかビーム数を減らす

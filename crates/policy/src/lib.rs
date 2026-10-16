@@ -8,7 +8,7 @@ mod weights;
 
 /// 方策に入力するLiDARビーム数（/scanをダウンサンプルした値）
 pub const NUM_BEAMS: usize = 24;
-const NUM_RANGES_RAW: usize = 360;
+pub const NUM_RANGES_RAW: usize = 360;
 const RANGES_PER_BEAM: usize = NUM_RANGES_RAW / NUM_BEAMS;
 /// RANGEを有限に限定するため、10.0で設定。sdfのLiDAR設定と揃える
 pub const RANGE_MAX: f32 = 10.0;
