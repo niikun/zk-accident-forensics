@@ -190,13 +190,13 @@
           走行では、減速帯（0.25〜0.5 m）で全速のまま壁に近づきすぎないかを動画で見る。
         - **出力の解釈を`policy`に入れた**（2026-10-15、`16ba6ce`でコミット済み）: `SpeedMode::from_mode(usize) -> Result<SpeedMode, &'static str>`（0=Max・1=Slow・2=Stop、それ以外は`Err`）と`speed_mode_to_linear(SpeedMode, f32) -> f32`（Max→`VMAX`・Stop→0.0・Slow→回帰値を`clamp(0.0, VMAX)`）。ビルドは通る。
           **学び**: `f32::clamp`は`NaN`を渡すと`NaN`を返す（今は`preprocess_beams`が`NaN`を0にするので来ない）。`match`の後ろに`;`を付けると関数が`()`を返してしまう。型の注釈は`name: Type`（コロン1つ）。
-          **残り（次回）**: ⬜`speed_mode_to_linear`のテストを足す（Max→`VMAX`・Stop→0・Slow: `-0.1→0.0`・`0.1→0.1`・`1.0→VMAX`。今は`Slow`に10.0を渡して`VMAX`の1件だけ）
+          ✅`speed_mode_to_linear`のテスト（10/16に完了と判断）: Max→`VMAX`・Stop→0・Slow(10.0)→`VMAX`。※Slowの下端（`-0.1→0.0`）と内側（`0.1→0.1`）はテストに無い（`clamp`の両端を見たくなったら足す）
           ✅（10/16、`predict`として実装。下記）**24本を受けて`Action`を返す関数**を`policy`に作る（`forward`→out1のargmax→`class_to_angular`→out2のargmax→`from_mode`→`speed_mode_to_linear`。argmaxは小さな関数にして`>`/`>=`を揃える）。`test_policy.rs`はそれを呼び、`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`を戻す（今はコメントアウトで、何が壊れても通る）
           ✅ **学習した方策がGazeboで走った**（2026-10-16）: `policy`に`predict(&[f32; 360]) -> Action`（前処理→`normalize_beam`→`forward`→argmax→`from_mode`→`speed_mode_to_linear`。失敗は let-else で停止指令）を作り、`policy_node`を`expert()`から`predict`に切り替えた。`cargo test -p policy`は13件＋統合1件通過。
           偽スキャンの疎通: 遠い→直進寄り・前方ふさがれ（`ranges[0]`だけ0.3）→`angular` π/4（`expert()`はπ/6で1クラス隣）・4本のみ→停止(0,0)でノードは落ちない。Gazeboの閉ループで**うまく走った**（壁にぶつからず走行）。
           `expert()`版は`policy_node_expert.rs`として残した（追加デモ収集・比較用）。ノードの`try_from`は`<&[f32;360]>::try_from(scan.ranges.as_slice())`（`scan.ranges`を忘れると`LaserScan`に`as_slice`が無いエラー。`intensities`と取り違えない）。
           **学び**: `unwrap_or(return ..)`は引数が先に評価されるので毎回`return`する（let-elseかmatchを使う）。`match`の枝に`;`を付けると値が`()`になる。
-          ⬜**動画（合格ライン）を撮る**（通常走行Aを1分ほど。画面録画の方法を決める）。⬜`policy_node`のエラーメッセージ（`beam_rages`→`ranges`）と`scan.ranges.len()`の表示。⬜`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`を統合テストに戻す。⬜警告の整理（`lib.rs`の未使用`hash::Hash`・`L2_W`、`test_policy.rs`の未使用`cmp::max`・`angular_to_class`・`linear_match`）と`cargo fmt`
+          ✅**動画（合格ライン）は撮影済み**（10/16。通常走行A）。✅`assert_eq!(class_match, 245)`・`assert_eq!(mode_match, 307)`は統合テスト（`test_policy.rs`）に戻した。⬜`policy_node`のエラーメッセージ（`beam_rages`→`ranges`）と`scan.ranges.len()`の表示。⬜警告の整理（`lib.rs`の未使用`hash::Hash`・`L2_W`、`test_policy.rs`の未使用`cmp::max`・`angular_to_class`・`linear_match`）と`cargo fmt`
           （epoch 49の時点の数字）外れの多くは隣のクラス（±1クラス以内が93.3%）。停止の行を除いたangularは64.2%（257行）。**走行には進む**（困ったら学習に戻る）
         - （古い。epoch 50に切り替えたので期待値は245/307。最新の残りは上の⬜の行）残り（サブPC）: `mode_match`も表示、`assert_eq!(class_match, 218)`・`assert_eq!(mode_match, 306)`で回帰テストにする、`linear_match`・`use std::cmp::max`（未使用）を整理、argmaxを関数にして`>`/`>=`を揃える、`cargo fmt`→コミット
         - 実行: `pixi run cargo test -p policy --test test_policy -- --nocapture`
@@ -698,15 +698,37 @@ cargo build && cargo test -p policy
 - 目安: 事故の窓2.5秒×10Hz＝25ステップ。1ステップ数百万サイクル以下ならf32で行ける見込み、数千万以上なら窓を短く・hidden 64を検討
 - 参考: `~/rust/projects/sp1/`に以前の練習（`fibonacci`・`merkle-proof`・`over18`、sp1-zkvm 6.0.1）。データの渡し方・公開出力の書き方は`fibonacci`の`program/src/main.rs`と`script/src/bin/main.rs`
 - 結果（サイクル数・ビット一致したか）はここに記録する
+- **結果（2026-10-17、メインPC、`~/project/zk_robotics_sp1/policy-cycles`、`--execute`）**
+  - ①guestで`policy`がビルドでき、zkVMで最後まで実行できた
+  - ②サイクル数（1ステップ）: 入力`[0.0; 360]`で約2,005,817、`[5.0; 360]`で約2,465,749（`Action{0.2, 0.0}`）。cycle-trackerで`predict`区間のみ2,455,517（固定コスト約1万）。入力で約23%動く（原因は未調査）。25ステップで約5000〜6200万サイクル＝目安（数百万以下）の範囲内
+  - ③ビット一致: **未検証**（`to_bits()`で比べる段階）
+  - 注意: `--execute`はguestのpanicでも成功表示になる（`stderr:`を見る）。`native-gnark`はGoが要る
 
 #### 進み具合（2026-10-16夜、サブPC）
 
 - ✅ ステップ0: テンプレートのfibonacciを`cargo run --release -- --execute`で実行 → `Number of cycles: 9620`（fib(20)。大半は入出力・`abi_encode`などの固定コスト）
 - ✅ ステップ1（目的①）: `program/Cargo.toml`に`policy = { path = "../../../zk-accident-forensics/crates/policy" }`を追加し、guestの`main()`で`predict(&[0.0; NUM_RANGES_RAW])`を呼ぶ → **guest（`+succinct`、RISC-V）で`policy`がビルドでき、zkVMで最後まで実行できた**（`Program executed successfully.`）
   - `policy`の`version.workspace = true`は、cargoがzk-accident-forensicsの`Cargo.toml`を読んで解決する（外からのpath依存で問題なし）
-  - `policy`の`NUM_RANGES_RAW`を`pub`にした（**未コミット**。メインPCで使うならコミット・pushが要る）
+  - `policy`の`NUM_RANGES_RAW`を`pub`にした（コミット済み、`add69c9`。メインPCは`git pull`で取り込む）
 - 未完了: hostはまだfibonacciの`PublicValuesStruct::abi_decode`をしているので、guestが`commit`しない今は`Err(Overrun)`でpanicし、**サイクル数の行まで届かない**。hostのfibonacci用の`abi_decode`〜`assert_eq!`を外す（`total_instruction_count()`は残す）
 - `policy-cycles`は**gitの外でサブPCにしかない**。メインPCでは`cargo prove new --bare policy-cycles`から作り直す（ステップ1は上の2点だけなので再現は数分）
+
+#### 方針（2026-10-17決定）: 段階を決めて進め、いつでもAで完結できるようにする
+
+- ユーザーが「ロボットもSP1もよくわかっていない」と感じ、まとめに入る案も出たが、**「もう少しやってみる」**と決めた。進める。
+- **段階**: ①サイクル数の計測（`--execute`、半日）→ ②guestとネイティブ`predict`の`to_bits()`ビット一致（半日〜1日）→ ③改ざんを弾く場面（ハッシュチェーン、2〜3日。動画のシナリオC）→ ④短い区間の`--prove`（①の結果しだい、リスクあり）。S3・`blackbox_node`の完全版・衝突検知は**削る**（残り約16日）
+- **関門は①**: 1ステップが数百万サイクル以下なら②③へ。数千万以上なら④は諦め、②までで完結（窓を短くする・hidden 64も検討）。
+- **保険（A完結）**: 合格ラインは満たしている（走行・動画・コード）。いつ止めても、レポートは「どこまで確かめ、どこからが未検証か」を正直に書いて完成させられる（工夫点: 入力を1 mで打ち切る正規化、`policy`を`no_std`にしてノードとguestで共有、guestでの実行確認。限界: センサー入力の真正性、core/compressedはZKでない）。
+- 作業場所: `~/project/zk_robotics_sp1/policy-cycles`（引き継ぎは同フォルダの`HANDOFF.md`）。
+
+#### 決定（2026-10-18）: ハッシュチェーン＋S2まで目指す／レポートのたたき台
+
+- `REPORT.md`を作成（**できたことだけを書く**方針。S1・`blackbox_node`・改ざん検出・`--prove`は未実施なので載せていない。できたら足す）
+- 目標: ハッシュチェーン＋guestでの`predict`再計算（S2）で「改ざんを弾く」まで。強みは**チェーンとS2の組み合わせ**（チェーン単体はVouch PAD-069と同じ）
+- 日程: 10/19〜20 ビット一致（`to_bits()`、関門）→ 10/21〜22 `policy_node`で「スキャン＋行動」の組を確定して記録・チェーン → 10/23〜25 guestで照合・改ざんを弾く（`--execute`）→ 10/26 短い区間（3〜5ステップ）の`--prove`を試す → 10/27〜11/1 動画・レポート
+- **10/25夜に改ざん検出が動いていなければ止めて、動画・レポートに回す**
+- 未決: 工夫点の核をどれにするか（コード共有／入力表現の発見／公開ルールでの事故判定）
+- 【同日、**最終判断: ここで開発を終了し、A完結**】上の日程は実施しない。残りは`REPORT.md`の仕上げ（動画・GitHubのURL記入、数字の再確認）と動画・提出だけ。`README.md`も実態に合わせて書き直した（できたことだけ）
 
 #### 次の手順（メインPCで）
 

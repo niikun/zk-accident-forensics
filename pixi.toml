@@ -1,5 +1,5 @@
 [workspace]
-authors = ["niikun <niikun0209@gmail.com>"]
+authors = ["niikun"]
 channels = ["https://prefix.dev/robostack-lyrical","conda-forge"]
 name = "zk_accident_forensics"
 platforms = ["linux-64"]

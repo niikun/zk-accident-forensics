@@ -3,7 +3,7 @@
   <name>robot_nodes</name>
   <version>0.1.0</version>
   <description>Policy and blackbox nodes for ZK accident forensics</description>
-  <maintainer email="niikun0209@gmail.com">niikun</maintainer>
+  <maintainer email="noreply@example.com">niikun</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclrs</depend>
