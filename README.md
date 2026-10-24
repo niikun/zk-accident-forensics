@@ -1,9 +1,11 @@
 # zk_accident_forensics
 
-秘密を守ったまま、事故の真相を証明するロボット（事故フォレンジック × ZK）。
+ロボットの行動を、どう証明するか。
+Physical AI × ゼロ知識証明 — Rust・ROS 2・SP1 zkVMによる実装。
 Physical AI 応用1講座 最終課題。
 
 自律移動ロボット（差動二輪＋2D LiDAR）を、模倣学習で作ったMLPの方策で走らせる。
+ロボットの機体（SDF）・走らせる「8の字」の部屋・走行デモ・方策のモデルは、すべて自作した。
 方策の推論コードは `no_std` のRust crateにまとめ、ROS 2ノードとSP1 zkVMのguestで同じコードを使う。
 レポートは [REPORT.md](REPORT.md)。
 
